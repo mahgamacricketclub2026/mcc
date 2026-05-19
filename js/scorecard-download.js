@@ -21,7 +21,7 @@ function battingTable(rows){
 function bowlingTable(stats){
   const entries = stats ? Object.entries(stats) : [];
   return `<table><thead><tr><th>Bowler</th><th>O</th><th>R</th><th>W</th><th>ER</th></tr></thead><tbody>${
-    entries.length ? entries.map(([name,s])=>`<tr><td><b>${safe(name)}</b></td><td>${overText(s.balls||0)}</td><td>${Number(s.runs||0)}</td><td>${Number(s.wkts||0)}</td><td>${s.balls?((Number(s.runs||0)/(Number(s.balls||0)/6)).toFixed(2)):"0.00"}</td></tr>`).join("") : `<tr><td colspan="5">No bowling data</td></tr>`
+    entries.length ? entries.map(([name,s])=>`<tr><td><b>${safe(s.playerName || s.name || name)}</b></td><td>${overText(s.balls||0)}</td><td>${Number(s.runs||0)}</td><td>${Number(s.wkts||0)}</td><td>${s.balls?((Number(s.runs||0)/(Number(s.balls||0)/6)).toFixed(2)):"0.00"}</td></tr>`).join("") : `<tr><td colspan="5">No bowling data</td></tr>`
   }</tbody></table>`;
 }
 
@@ -116,7 +116,7 @@ window.downloadScorecardPdf = async function(){
       scale: 2,
       useCORS: true,
       backgroundColor: "#ffffff",
-      windowWidth: content.scrollWidth
+      windowWidth: 980
     });
     const pdf = new jsPDF("p", "mm", "a4");
     const pageWidth = 210;

@@ -97,6 +97,16 @@ th{background:#f1f5f9;color:#475569;text-transform:uppercase;font-size:11px}
 .check-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .check-grid label{margin:0;text-transform:none;color:#334155;background:#f8fafc;border:1px solid #d8e1ec;border-radius:10px;padding:9px}
 .check-grid input{width:auto}
+.league-section{border-top:1px solid #e2e8f0;margin-top:14px;padding-top:12px}
+.league-section h3{margin:0 0 10px;font-size:13px;text-transform:uppercase;color:#475569;letter-spacing:.04em}
+.league-tools,.team-tools{display:flex;gap:8px;align-items:end;flex-wrap:wrap}
+.league-tools>div{flex:1;min-width:180px}
+.league-action-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}
+.league-action-grid .btn{text-align:center}
+.team-tools input{flex:1;min-width:180px}
+.team-tools span{font-size:12px;font-weight:900;color:#475569}
+.fixture-alert{margin:8px 0;padding:9px;border:1px solid #fecaca;background:#fff1f2;color:#991b1b;border-radius:10px;font-size:12px;font-weight:800}
+.fixture-row.locked-playoff{border-color:#f59e0b;background:#fffbeb}
 .player-grid,.history-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}
 .card-mini{border:1px solid #e2e8f0;border-radius:12px;padding:10px;background:#fff;cursor:pointer}
 .card-mini:hover{border-color:#0f766e}

@@ -7,12 +7,14 @@ import {
 } from "./firebase-store.js";
 import { writeLiveMatch } from "./firebase-live.js";
 import { livePayload, storePayload, normalizeState, normalizeBatter, overText, calcSR, calcER, clone } from "./live-sync.js";
+import { buildBallCommentary, buildSpecialCommentary, buildOverCommentary, chaseLine as buildChaseLine } from "./commentary-engine.js";
 
 const $ = (id) => document.getElementById(id);
 const todayKey = () => new Date().toISOString().slice(0, 10).replaceAll("-", "");
 const ACTIVE_MATCH_KEY = "cricket_admin_active_match_backup";
 const MANUAL_SCORE_KEY = (matchId) => `cricket_admin_manual_score_checkpoint_${matchId || "none"}`;
 const PUBLIC_LEAGUE_TABS_KEY = "cricket_admin_public_league_tabs";
+const LEAGUE_DRAFT_KEY = "cricket_admin_league_draft";
 
 const blankState = () => normalizeState({
   matchId: "",
@@ -37,6 +39,7 @@ const blankState = () => normalizeState({
   tossText: "Toss pending",
   inningNumber: 1,
   totalOvers: 20,
+  powerplayOvers: 4,
   runs: 0,
   wkts: 0,
   balls: 0,
@@ -71,6 +74,7 @@ const blankState = () => normalizeState({
   league: null,
   winnerText: "",
   superOver: null,
+  freeHitActive: false,
   mvp: "",
   playerOfMatch: "",
   commentaryMode: "en",
@@ -89,6 +93,7 @@ window.app = {
   leagues: [],
   completed: [],
   scheduled: [],
+  leagueSelectedIds: new Set(),
   selectedTeamId: "",
   selectedPlayerId: "",
   activeUnsubPlayers: null,
@@ -144,6 +149,7 @@ window.app = {
     $("switchInningsBtn").onclick = () => this.askSwitchInnings();
     $("startSuperOverBtn").onclick = () => this.runOnce("startSuperOver", "startSuperOverBtn", () => this.startSuperOver());
     $("manualSaveBtn").onclick = () => this.runOnce("manualSave", "manualSaveBtn", () => this.manualSaveScore());
+    $("clearBackupBtn").onclick = () => this.clearLocalBackups();
     $("completeBtn").onclick = () => this.runOnce("completeMatch", "completeBtn", () => this.completeMatch());
     $("lockBtn").onclick = () => this.setLock(true);
     $("unlockBtn").onclick = () => this.setLock(false);
@@ -168,6 +174,24 @@ window.app = {
     if ($("deleteLeagueBtn")) $("deleteLeagueBtn").onclick = () => this.runOnce("deleteLeague", "deleteLeagueBtn", () => this.deleteSelectedLeague());
     if ($("publicLeagueTabsBtn")) $("publicLeagueTabsBtn").onclick = () => this.togglePublicLeagueTabs();
     if ($("leagueEditorClose")) $("leagueEditorClose").onclick = () => $("leagueEditor").classList.remove("show");
+    if ($("leagueTeamsBtn")) $("leagueTeamsBtn").onclick = () => this.openLeagueSubModal("leagueTeamsModal");
+    if ($("leagueScheduleBtn")) $("leagueScheduleBtn").onclick = () => this.openLeagueSubModal("leagueScheduleModal");
+    if ($("leaguePointsRulesBtn")) $("leaguePointsRulesBtn").onclick = () => this.openLeagueSubModal("leaguePointsModal");
+    if ($("leagueManualPointsBtn")) $("leagueManualPointsBtn").onclick = () => this.openLeagueSubModal("leagueManualPointsModal");
+    if ($("leaguePlayoffsBtn")) $("leaguePlayoffsBtn").onclick = () => this.openLeagueSubModal("leaguePlayoffsModal");
+    ["leagueTeamsClose", "leagueScheduleClose", "leaguePointsClose", "leagueManualPointsClose", "leaguePlayoffsClose"].forEach(id => {
+      if ($(id)) $(id).onclick = () => $(id.replace("Close", "Modal"))?.classList.remove("show");
+    });
+    if ($("leagueTemplate")) $("leagueTemplate").onchange = () => this.applyLeagueTemplate($("leagueTemplate").value);
+    if ($("leagueTeamSearch")) $("leagueTeamSearch").oninput = () => this.renderLeagueTeamChecks();
+    if ($("leagueSelectAll")) $("leagueSelectAll").onclick = () => this.setVisibleLeagueTeams(true);
+    if ($("leagueClearTeams")) $("leagueClearTeams").onclick = () => this.setVisibleLeagueTeams(false);
+    if ($("applyManualPointsBtn")) $("applyManualPointsBtn").onclick = () => this.applyManualPoints();
+    if ($("lockPlayoffsBtn")) $("lockPlayoffsBtn").onclick = () => this.togglePlayoffLock();
+    ["leagueName", "leagueShort", "leagueSeason", "leagueOvers", "leagueLogo", "leagueFormat", "includeEliminator", "iplPlayoffs", "leagueStatus", "leagueStartDate", "leagueDefaultTime", "leagueGapDays", "leagueVenues", "pointsWin", "pointsTie", "pointsNR", "bonusPoint"].forEach(id => {
+      if ($(id)) $(id).addEventListener("change", () => this.saveLeagueDraftLocal());
+      if ($(id) && ["INPUT", "TEXTAREA"].includes($(id).tagName)) $(id).addEventListener("input", () => this.saveLeagueDraftLocal());
+    });
     this.loadPublicLeagueTabsSetting();
     $("generateScheduleBtn").onclick = () => this.runOnce("generateSchedule", "generateScheduleBtn", () => this.generateSchedule());
     if ($("autoFillPlayoffsBtn")) $("autoFillPlayoffsBtn").onclick = () => this.autoFillPlayoffs();
@@ -303,8 +327,7 @@ window.app = {
         localStorage.removeItem(ACTIVE_MATCH_KEY);
         return;
       }
-      const backup = clone(normalizeState(this.state));
-      backup.undoStack = (backup.undoStack || []).slice(-8);
+      const backup = storePayload(this.state, this.state.matchId, this.uid);
 
       // Do not allow an older/stale auto backup to replace a newer manual checkpoint.
       const manualRaw = localStorage.getItem(MANUAL_SCORE_KEY(backup.matchId));
@@ -325,6 +348,20 @@ window.app = {
       localStorage.removeItem(ACTIVE_MATCH_KEY);
       if (id) localStorage.removeItem(MANUAL_SCORE_KEY(id));
     } catch (_) {}
+  },
+
+  clearLocalBackups() {
+    try {
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const key = localStorage.key(i);
+        if (/^cricket_admin_(active_match_backup|manual_score_checkpoint_)/.test(key || "")) keys.push(key);
+      }
+      keys.forEach(key => localStorage.removeItem(key));
+      this.toast(`Cleared ${keys.length} local backup${keys.length === 1 ? "" : "s"}.`);
+    } catch (error) {
+      this.toast("Unable to clear local backup: " + error.message, true);
+    }
   },
 
   restoreActiveMatch() {
@@ -405,6 +442,7 @@ window.app = {
     if ($("matchDate")) $("matchDate").value = s.matchDate || "";
     if ($("matchTime")) $("matchTime").value = s.matchTime || s.liveControl?.displayTime || "";
     if ($("totalOvers")) $("totalOvers").value = Number(s.totalOvers || 20);
+    if ($("powerplayOvers")) $("powerplayOvers").value = Number(s.powerplayOvers ?? 4);
     if ($("matchType")) $("matchType").value = s.matchType || "T20";
     if ($("commentaryMode")) $("commentaryMode").value = s.commentaryMode || "en";
     if ($("followLink")) $("followLink").value = s.followLink || "";
@@ -495,19 +533,24 @@ window.app = {
       return null;
     }
     const totalOvers = Number($("totalOvers").value || 0);
+    const powerplayOvers = Number($("powerplayOvers")?.value ?? 4);
     if (!Number.isFinite(totalOvers) || totalOvers <= 0) {
       this.toast("Total overs must be at least 1.", true);
       return null;
     }
+    if (!Number.isFinite(powerplayOvers) || powerplayOvers < 0 || powerplayOvers > totalOvers) {
+      this.toast("Powerplay overs must be between 0 and total overs.", true);
+      return null;
+    }
     const league = this.leagues.find(l => l.leagueId === $("setupLeague").value) || null;
-    return { teamA, teamB, league, totalOvers };
+    return { teamA, teamB, league, totalOvers, powerplayOvers };
   },
 
   async saveScheduleOnly() {
     const setup = this.setupTeamsAndLeague();
     if (!setup) return;
     if (!$("matchTime").value) return this.toast("Select match start time before saving schedule.", true);
-    const { teamA, teamB, league, totalOvers } = setup;
+    const { teamA, teamB, league, totalOvers, powerplayOvers } = setup;
     const matchId = this.state?.matchId && !this.state.matchFinished && this.state.status === "scheduled" ? this.state.matchId : this.newMatchId();
     this.currentMatchId = matchId;
     this.state = blankState();
@@ -532,6 +575,7 @@ window.app = {
       teamA: this.teamObj(teamA),
       teamB: this.teamObj(teamB),
       totalOvers,
+      powerplayOvers,
       commentaryMode: $("commentaryMode")?.value || "en",
       followLink: $("followLink").value.trim(),
       teams: this.teamsToMap(),
@@ -551,7 +595,7 @@ window.app = {
   async startMatch() {
     const setup = this.setupTeamsAndLeague();
     if (!setup) return;
-    const { teamA, teamB, league, totalOvers } = setup;
+    const { teamA, teamB, league, totalOvers, powerplayOvers } = setup;
     const tossTeam = this.teamById($("tossWinner").value);
     if (!tossTeam) return this.toast("Select toss winner before starting match.", true);
     if (![teamA.teamId, teamB.teamId].includes(tossTeam.teamId)) return this.toast("Toss winner must be Team A or Team B.", true);
@@ -593,6 +637,7 @@ window.app = {
       tossDecision: $("tossDecision").value,
       tossText: `${tossTeam.name} chose ${$("tossDecision").value === "bat" ? "bat" : "bowl"}`,
       totalOvers,
+      powerplayOvers,
       commentaryMode: $("commentaryMode")?.value || this.state.commentaryMode || "en",
       bat1: normalizeBatter({ playerId: striker.playerId, name: striker.name, position: 1 }),
       bat2: normalizeBatter({ playerId: nonStriker.playerId, name: nonStriker.name, position: 2 }),
@@ -637,6 +682,7 @@ window.app = {
     if (!(await this.ensureLivePlayersSelected())) return;
     if (run === "custom") { const v = prompt("Enter runs"); if (v === null || isNaN(v)) return; run = Number(v); }
     const isWide = $("wide").checked, isNo = $("noball").checked, isBye = $("bye").checked, isLb = $("legbye").checked, isWicket = $("wicket").checked;
+    const freeHitActive = !!s.freeHitActive;
     if (isWide && isNo) return this.toast("Wide and No Ball cannot be selected together.", true);
     if (isBye && isLb) return this.toast("Bye and Leg Bye cannot be selected together.", true);
     if (isWide && (isBye || isLb)) return this.toast("Do not combine Wide with Bye or Leg Bye. Add wide runs with the run button.", true);
@@ -688,14 +734,15 @@ window.app = {
     if (isWicket) label = this.applyWicket(label, legal, bowlerKey, bs);
 
     s.over.push(label);
-    const ballNo = overText(s.balls);
-    const specialText = this.specialCommentaryText(striker, bowlerName, bowlerKey, { legal, batRuns, isWicket, wicketInfo, beforeRuns: strikerBeforeRuns });
-    const text = [this.advancedCommentaryText(ballNo, striker.name, bowlerName, label, { run, isWide, isNo, isBye, isLb, isWicket, batRuns, totalRuns, extraRuns, wicketInfo }), specialText].filter(Boolean).join(" ");
+    const ballNo = this.deliveryBallText(s.balls, legal);
+    const specialText = this.specialCommentaryText(striker, bowlerName, bowlerKey, { legal, batRuns, isWicket, wicketInfo, beforeRuns: strikerBeforeRuns, freeHitActive });
+    const text = [this.advancedCommentaryText(ballNo, striker.name, bowlerName, label, { run, isWide, isNo, isBye, isLb, isWicket, batRuns, totalRuns, extraRuns, wicketInfo, freeHitActive }), specialText].filter(Boolean).join(" ");
     s.commentary.unshift({ ball: ballNo, text, time: new Date().toLocaleTimeString() });
     s.recentBalls.unshift({ ball: ballNo, label, text, score: `${s.runs}/${s.wkts} (${overText(s.balls)})` });
     s.recentBalls = s.recentBalls.slice(0, 20);
     if (batRuns === 4 || batRuns === 6) s.highlights.unshift({ text: `${batRuns === 4 ? "FOUR" : "SIX"} by ${striker.name}`, time: new Date().toLocaleTimeString() });
     if (specialText) s.highlights.unshift({ text: specialText, time: new Date().toLocaleTimeString() });
+    s.freeHitActive = isNo || (freeHitActive && !legal);
 
     const maxBalls = Number(s.totalOvers || 20) * 6;
     const chaseComplete = s.inningNumber > 1 && s.target && s.runs >= s.target;
@@ -754,6 +801,11 @@ window.app = {
     if (flags.isBye) return `${run}B`;
     if (flags.isLb) return `${run}LB`;
     return String(run);
+  },
+
+  deliveryBallText(balls, legal) {
+    const completed = Math.max(0, Number(balls || 0) - (legal ? 1 : 0));
+    return `${Math.floor(completed / 6)}.${(completed % 6) + 1}`;
   },
 
   applyWicket(label, legal, bowlerKey, bs) {
@@ -893,7 +945,7 @@ window.app = {
     this.state.battingTeam = this.state.bowlingTeam;
     this.state.bowlingTeam = oldBat;
     this.state.inningNumber = 2;
-    Object.assign(this.state, { runs: 0, wkts: 0, balls: 0, extras: 0, striker: 1, over: [], recentBalls: [], overSummary: [], commentary: [], fallOfWickets: [], partnershipRuns: 0, partnershipBalls: 0, lastWicket: "-", dismissed: [], retired: [], battingScorecard: [], bowlerStats: {}, lastOverBowler: "", specialStreaks: { batterId: "", shot: "", shotCount: 0, bowlerId: "", wicketCount: 0, partnershipMark: 0, lastPressureKey: "", lastPhaseKey: "", bowlerHighlightKey: "" } });
+    Object.assign(this.state, { runs: 0, wkts: 0, balls: 0, extras: 0, striker: 1, over: [], recentBalls: [], overSummary: [], commentary: [], fallOfWickets: [], partnershipRuns: 0, partnershipBalls: 0, freeHitActive: false, lastWicket: "-", dismissed: [], retired: [], battingScorecard: [], bowlerStats: {}, lastOverBowler: "", specialStreaks: { batterId: "", shot: "", shotCount: 0, bowlerId: "", wicketCount: 0, partnershipMark: 0, lastPressureKey: "", lastPhaseKey: "", bowlerHighlightKey: "" } });
     this.state.bat1 = normalizeBatter({ name: "-" });
     this.state.bat2 = normalizeBatter({ name: "-" });
     this.state.bowler = { name: "-", balls: 0, r: 0, w: 0, runs: 0, wkts: 0, dots: 0, wides: 0, noBalls: 0 };
@@ -958,6 +1010,8 @@ window.app = {
       s.status = "tied";
       s.liveControl = { mode: "paused", note: "Match Tied - Super Over Available" };
       s.scoringLocked = true;
+      s.commentary.unshift({ ball: "Tie", text: "स्कोर बराबर, अब फैसला सुपर ओवर में होगा।", time: new Date().toLocaleTimeString(), type: "over" });
+      s.highlights.unshift({ text: "Match tied - Super Over available", time: new Date().toLocaleTimeString() });
       await this.saveAll(true);
       this.render();
       return this.toast("Match tied. Start Super Over to decide the winner.");
@@ -983,6 +1037,7 @@ window.app = {
     s.liveStarted = true;
     s.status = "super-over";
     s.liveControl = { mode: "live", note: "Super Over" };
+    s.commentary.unshift({ ball: "SO", text: "सुपर ओवर शुरू, अब सिर्फ छह गेंदों में मैच का फैसला होगा।", time: new Date().toLocaleTimeString(), type: "over" });
     await this.pickSuperOverPlayers();
     await this.saveAll(true);
     this.render();
@@ -1012,6 +1067,7 @@ window.app = {
       fallOfWickets: [],
       partnershipRuns: 0,
       partnershipBalls: 0,
+      freeHitActive: false,
       lastWicket: "-",
       dismissed: [],
       retired: []
@@ -1042,6 +1098,7 @@ window.app = {
       const bowling = s.superOver.teamA;
       this.resetInningsForSuperOver(batting, bowling, 2, s.superOver.first.runs + 1);
       s.superOver.inning = 2;
+      s.commentary.unshift({ ball: "SO Chase", text: `सुपर ओवर चेज शुरू, लक्ष्य ${s.target} रन का है।`, time: new Date().toLocaleTimeString(), type: "over" });
       await this.pickSuperOverPlayers();
       await this.saveAll(true);
       this.render();
@@ -1213,6 +1270,10 @@ window.app = {
     const a = this.state.teamA?.name || "";
     const b = this.state.teamB?.name || "";
     if (!a || !b) return null;
+    const rules = this.state.league?.pointsRules || this.currentLeague()?.pointsRules || { win: 2, tie: 1, noResult: 1 };
+    const winPts = Number(rules.win ?? 2);
+    const tiePts = Number(rules.tie ?? 1);
+    const nrPts = Number(rules.noResult ?? 1);
     const impact = {
       matchId: this.state.matchId || "",
       status,
@@ -1226,8 +1287,8 @@ window.app = {
     if (status === "no-result") {
       impact.teams[a].NR++;
       impact.teams[b].NR++;
-      impact.teams[a].Pts++;
-      impact.teams[b].Pts++;
+      impact.teams[a].Pts += nrPts;
+      impact.teams[b].Pts += nrPts;
       return impact;
     }
     const innA = this.state.inningsDetails?.[a] || {};
@@ -1241,11 +1302,11 @@ window.app = {
     impact.teams[b].RA += Number(innA.runs || 0);
     impact.teams[b].BA += this.pointsBallsForTeam(a, innA);
     if (/tied/i.test(this.state.winnerText) && !/super over/i.test(this.state.winnerText)) {
-      impact.teams[a].T++; impact.teams[b].T++; impact.teams[a].Pts++; impact.teams[b].Pts++;
+      impact.teams[a].T++; impact.teams[b].T++; impact.teams[a].Pts += tiePts; impact.teams[b].Pts += tiePts;
     } else if (this.state.winnerText.startsWith(a) || this.state.winnerText.includes(`${a} won in Super Over`)) {
-      impact.teams[a].W++; impact.teams[b].L++; impact.teams[a].Pts += 2;
+      impact.teams[a].W++; impact.teams[b].L++; impact.teams[a].Pts += winPts;
     } else if (this.state.winnerText.startsWith(b) || this.state.winnerText.includes(`${b} won in Super Over`)) {
-      impact.teams[b].W++; impact.teams[a].L++; impact.teams[b].Pts += 2;
+      impact.teams[b].W++; impact.teams[a].L++; impact.teams[b].Pts += winPts;
     }
     return impact;
   },
@@ -1381,317 +1442,17 @@ window.app = {
     if (/Wd|Nb/i.test(text)) return n || 1;
     return Number.isFinite(n) ? n : 0;
   },
-  commentaryPick(lines, key = "") {
-    const source = `${key}|${this.state.balls}|${this.state.runs}|${this.state.wkts}|${this.state.commentary?.length || 0}`;
-    const seed = [...source].reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
-    return lines[seed % lines.length];
-  },
   specialCommentaryText(batter, bowlerName, bowlerKey, flags = {}) {
-    const s = this.state;
-    const mode = s.commentaryMode || $("commentaryMode")?.value || "en";
-    const streaks = s.specialStreaks || (s.specialStreaks = { batterId: "", shot: "", shotCount: 0, bowlerId: "", wicketCount: 0, partnershipMark: 0, lastPressureKey: "", lastPhaseKey: "", bowlerHighlightKey: "" });
-    const playerKey = batter?.playerId || batter?.name || "";
-    const parts = [];
-    const before = Number(flags.beforeRuns || 0);
-    const after = Number(batter?.r || 0);
-    const t = {
-      hi: {
-        pressure: "दबाव बढ़ रहा है, अब हर गेंद अहम है।",
-        lastOver: (need) => `आखिरी ओवर में ${need} रन चाहिए, मैच रोमांचक मोड़ पर है।`,
-        powerplay: "पावरप्ले में बल्लेबाजी टीम तेज शुरुआत चाहती है।",
-        death: "डेथ ओवर शुरू, अब बड़े शॉट और दबाव दोनों साथ चलेंगे।",
-        middle: "बीच के ओवरों में स्ट्राइक रोटेशन अहम रहेगा।",
-        partnership: (mark) => `इस जोड़ी ने ${mark} रन की साझेदारी पूरी की।`,
-        economy: `${bowlerName} ने कसी हुई गेंदबाजी से रन रोक रखे हैं।`,
-        wickets: `${bowlerName} का स्पेल असरदार रहा है, विकेट लगातार दबाव बना रहे हैं।`,
-        fast: `${batter.name} तेज खेल रहे हैं, स्ट्राइक रेट लगातार ऊपर जा रहा है।`
-      },
-      mix: {
-        pressure: "Pressure badh raha hai, ab har ball important hai.",
-        lastOver: (need) => `Last over me ${need} run chahiye, match ekdum tight hai.`,
-        powerplay: "Powerplay me batting side fast start dhoondh rahi hai.",
-        death: "Death overs shuru, ab bade shots aur pressure dono rahenge.",
-        middle: "Middle overs me strike rotation bahut important rahega.",
-        partnership: (mark) => `Is pair ne ${mark} run ki partnership complete kar li.`,
-        economy: `${bowlerName} tight bowling kar rahe hain, runs rok diye hain.`,
-        wickets: `${bowlerName} ka spell impactful hai, wickets se pressure bana hai.`,
-        fast: `${batter.name} attacking mood me hain, strike rate upar ja raha hai.`
-      },
-      en: {
-        pressure: "Pressure is rising, every ball matters now.",
-        lastOver: (need) => `${need} needed in the final over, this match is on a knife edge.`,
-        powerplay: "Powerplay phase, the batting side will want a fast start.",
-        death: "Death overs now, big shots and pressure come together.",
-        middle: "Middle overs phase, strike rotation will be important.",
-        partnership: (mark) => `This pair brings up a ${mark}-run partnership.`,
-        economy: `${bowlerName} has kept it tight and dried up the scoring.`,
-        wickets: `${bowlerName} is making this spell count with wickets.`,
-        fast: `${batter.name} is scoring quickly and lifting the tempo.`
-      }
-    }[mode] || {};
-
-    const milestone = [200, 150, 100, 50].find(mark => before < mark && after >= mark);
-    if (milestone) {
-      if (mode === "hi") {
-        parts.push(milestone === 50
-          ? `${batter.name} का अर्धशतक पूरा, शानदार पारी।`
-          : `${batter.name} ने ${milestone} रन पूरे किए, बेहतरीन बल्लेबाजी।`);
-      } else if (mode === "mix") {
-        parts.push(milestone === 50
-          ? `${batter.name} ka fifty complete, kamaal ki batting.`
-          : `${batter.name} ne ${milestone} runs complete kiye, top-class knock.`);
-      } else {
-        parts.push(milestone === 50
-          ? `${batter.name} brings up a fine fifty.`
-          : `${batter.name} reaches ${milestone}, outstanding batting.`);
-      }
-    }
-
-    if (flags.legal && (flags.batRuns === 4 || flags.batRuns === 6)) {
-      const shot = flags.batRuns === 6 ? "six" : "four";
-      if (streaks.batterId === playerKey && streaks.shot === shot) streaks.shotCount = Number(streaks.shotCount || 0) + 1;
-      else Object.assign(streaks, { batterId: playerKey, shot, shotCount: 1 });
-      if (streaks.shotCount === 3) {
-        const shotHi = shot === "six" ? "छक्कों" : "चौकों";
-        const shotMix = shot === "six" ? "sixes" : "fours";
-        parts.push(mode === "hi"
-          ? `${batter.name} ने लगातार तीन ${shotHi} लगाए।`
-          : mode === "mix"
-            ? `${batter.name} ke back-to-back three ${shotMix}, pressure badh gaya.`
-            : `${batter.name} makes it three ${shotMix} in a row.`);
-      }
-    } else if (flags.legal) {
-      Object.assign(streaks, { batterId: playerKey, shot: "", shotCount: 0 });
-    }
-
-    const wicketType = flags.wicketInfo?.type || "";
-    const bowlerWicket = flags.legal && flags.isWicket && !["Run Out", "Retired Out"].includes(wicketType);
-    if (bowlerWicket) {
-      if (streaks.bowlerId === bowlerKey) streaks.wicketCount = Number(streaks.wicketCount || 0) + 1;
-      else Object.assign(streaks, { bowlerId: bowlerKey, wicketCount: 1 });
-      if (streaks.wicketCount === 2) {
-        parts.push(mode === "hi"
-          ? `${bowlerName} अब हैट्रिक पर हैं।`
-          : mode === "mix"
-            ? `${bowlerName} hat-trick ball par aa gaye.`
-            : `${bowlerName} is on a hat-trick.`);
-      } else if (streaks.wicketCount === 3) {
-        parts.push(mode === "hi"
-          ? `हैट्रिक! ${bowlerName} ने लगातार तीन विकेट लिए।`
-          : mode === "mix"
-            ? `HAT-TRICK! ${bowlerName} ne lagatar teen wicket le liye.`
-            : `HAT-TRICK! ${bowlerName} has three wickets in three balls.`);
-      }
-    } else if (flags.legal && !flags.isWicket) {
-      Object.assign(streaks, { bowlerId: bowlerKey, wicketCount: 0 });
-    }
-
-    if (!flags.isWicket) {
-      const partnership = Number(s.partnershipRuns || 0);
-      const partnershipMark = [150, 100, 50].find(mark => partnership >= mark && Number(streaks.partnershipMark || 0) < mark);
-      if (partnershipMark) {
-        streaks.partnershipMark = partnershipMark;
-        parts.push(t.partnership(partnershipMark));
-      }
-    } else {
-      streaks.partnershipMark = 0;
-    }
-
-    const totalBalls = Number(s.totalOvers || 20) * 6;
-    const ballsLeft = Math.max(totalBalls - Number(s.balls || 0), 0);
-    const need = s.target ? Math.max(Number(s.target || 0) - Number(s.runs || 0), 0) : 0;
-    const rrr = need && ballsLeft ? (need * 6) / ballsLeft : 0;
-    if (s.inningNumber > 1 && need > 0) {
-      if (ballsLeft <= 6) {
-        const key = `last-${need}-${ballsLeft}`;
-        if (streaks.lastPressureKey !== key) {
-          streaks.lastPressureKey = key;
-          parts.push(t.lastOver(need));
-        }
-      } else if (rrr >= 10 || (ballsLeft <= 18 && need >= ballsLeft)) {
-        const key = `pressure-${Math.ceil(rrr)}-${Math.ceil(ballsLeft / 6)}`;
-        if (streaks.lastPressureKey !== key) {
-          streaks.lastPressureKey = key;
-          parts.push(t.pressure);
-        }
-      }
-    }
-
-    if (flags.legal) {
-      const overNo = Math.floor(Number(s.balls || 0) / 6) + 1;
-      const phase = overNo <= Math.min(6, Number(s.totalOvers || 20)) ? "powerplay" : ballsLeft <= 24 ? "death" : "middle";
-      const phaseKey = `${s.inningNumber}-${phase}`;
-      if (streaks.lastPhaseKey !== phaseKey) {
-        streaks.lastPhaseKey = phaseKey;
-        parts.push(t[phase]);
-      }
-    }
-
-    const bowlerStat = s.bowlerStats?.[bowlerKey] || {};
-    const bowlerBalls = Number(bowlerStat.balls || 0);
-    const bowlerRuns = Number(bowlerStat.runs || 0);
-    const bowlerWkts = Number(bowlerStat.wkts || 0);
-    const economy = bowlerBalls ? (bowlerRuns / (bowlerBalls / 6)) : 0;
-    if (bowlerBalls >= 12 && economy > 0 && economy <= 4) {
-      const key = `${bowlerKey}-eco-${Math.floor(bowlerBalls / 6)}`;
-      if (streaks.bowlerHighlightKey !== key) {
-        streaks.bowlerHighlightKey = key;
-        parts.push(t.economy);
-      }
-    } else if (bowlerWkts >= 3) {
-      const key = `${bowlerKey}-wkts-${bowlerWkts}`;
-      if (streaks.bowlerHighlightKey !== key) {
-        streaks.bowlerHighlightKey = key;
-        parts.push(t.wickets);
-      }
-    }
-
-    if (Number(batter?.b || 0) >= 8 && Number(batter?.r || 0) >= 20) {
-      const strikeRate = (Number(batter.r || 0) * 100) / Number(batter.b || 1);
-      const key = `${playerKey}-fast-${Math.floor(Number(batter.r || 0) / 20)}`;
-      if (strikeRate >= 160 && streaks.fastBatterKey !== key) {
-        streaks.fastBatterKey = key;
-        parts.push(t.fast);
-      }
-    }
-
-    return parts.join(" ");
+    return buildSpecialCommentary({ state: this.state, batter, bowlerName, bowlerKey, flags });
   },
   advancedCommentaryText(ballNo, batter, bowler, label, flags = {}) {
-    const run = Number(flags.run || 0);
-    const score = `${this.state.runs}/${this.state.wkts}`;
-    const chase = this.state.inningNumber > 1 && this.state.target ? this.chaseLine() : "";
-    const base = `${bowler} to ${batter}`;
-    const mode = this.state.commentaryMode || $("commentaryMode")?.value || "en";
-    const total = Number(flags.totalRuns ?? run ?? 0);
-    const rawType = flags.wicketInfo?.type || "Wicket";
-    const hiTypes = { Bowled: "बोल्ड", LBW: "एलबीडब्ल्यू", Caught: "कैच आउट", "Run Out": "रन आउट", Stumping: "स्टंपिंग", "Hit Wicket": "हिट विकेट", "Retired Out": "रिटायर्ड आउट", Wicket: "विकेट" };
-    const type = mode === "hi" ? (hiTypes[rawType] || rawType) : rawType;
-    const helper = flags.wicketInfo?.helper ? (mode === "hi" ? `, ${flags.wicketInfo.helper} शामिल` : `, ${flags.wicketInfo.helper} involved`) : "";
-    const packs = {
-      en: {
-        wicket: [`WICKET! ${type}${helper}. ${batter} is gone.`, `Breakthrough! ${type}${helper}, ${batter} has to walk back.`, `Huge moment. ${batter} falls by ${type}${helper}.`],
-        wide: [`Wide ball. Extra run added.`, `Sprayed down the side, called wide.`, `The line is off, wide signalled.`],
-        wideRuns: [`Wide, ${total} runs added.`, `Loose ball and ${total} wides on the board.`, `${total} added from the wide.`],
-        no: [`No ball. Free hit coming.`, `Overstepped, no ball called.`, `No ball from ${bowler}; the next one is a free hit.`],
-        noRuns: [`No ball and ${run} run${run > 1 ? "s" : ""}. Free hit coming.`, `Overstepped, and they take ${run}. Free hit next.`, `${run} off the no ball, pressure on the bowler.`],
-        bye: [`${total} bye${total > 1 ? "s" : ""}.`, `Missed by everyone, ${total} bye${total > 1 ? "s" : ""}.`, `Extras ticking along, ${total} bye${total > 1 ? "s" : ""}.`],
-        lb: [`${total} leg bye${total > 1 ? "s" : ""}.`, `Off the pad, ${total} leg bye${total > 1 ? "s" : ""}.`, `Leg bye taken, ${total} added.`],
-        six: [`SIX! Clean strike, all the way.`, `SIX! That has been launched into the stands.`, `Massive hit from ${batter}, six runs.`],
-        four: [`FOUR! Finds the gap and races away.`, `FOUR! Timed well and the outfield does the rest.`, `Boundary for ${batter}, placed perfectly.`],
-        dot: [`Dot ball. Good control from the bowler.`, `No run, tight line from ${bowler}.`, `Beaten for pace and there is no single there.`],
-        one: [`Worked away for a single.`, `Quick single taken.`, `${batter} rotates the strike.`],
-        two: [`Pushed into the gap, they come back for two.`, `Good running, two added.`, `Placed softly and they complete a couple.`],
-        three: [`Excellent running, three taken.`, `They push hard and get three.`, `Long chase in the deep, three runs.`],
-        other: [`${run} runs taken.`, `${run} added to the total.`, `They collect ${run}.`],
-        score: `Score ${score}.`
-      },
-      mix: {
-        wicket: [`WICKET! ${type}${helper}. ${batter} ko jaana padega.`, `Breakthrough! ${type}${helper}, match me twist aa gaya.`, `Bada moment, ${batter} ${type}${helper} out.`],
-        wide: [`Wide ball, extra run add hua.`, `Line miss hui, umpire ne wide diya.`, `Bowler direction se bhatak gaya, wide.`],
-        wideRuns: [`Wide, ${total} runs add hue.`, `Loose ball, ${total} wides mil gaye.`, `${total} run wide se aa gaye.`],
-        no: [`No ball. Free hit coming.`, `Overstep hua, no ball.`, `No ball by ${bowler}, ab free hit.`],
-        noRuns: [`No ball aur ${run} run${run > 1 ? "s" : ""}. Free hit coming.`, `No ball pe ${run} run bhi mil gaya.`, `${run} run no ball se, pressure badhega.`],
-        bye: [`${total} bye run.`, `Keeper miss, ${total} bye mil gaya.`, `Ball sabko beat kar gayi, ${total} bye.`],
-        lb: [`${total} leg bye run.`, `Pad se laga, ${total} leg bye.`, `Leg bye se ${total} add.`],
-        six: [`SIX! Zabardast hit, seedha bahar.`, `SIX! Badiya connection, crowd me ball.`, `${batter} ne pura shot khola, six.`],
-        four: [`FOUR! Gap mila aur boundary.`, `FOUR! Timing superb thi.`, `${batter} ne placement se four nikala.`],
-        dot: [`Dot ball. Bowler ka achha control.`, `No run, tight bowling.`, `Batter ko room nahi mila.`],
-        one: [`Single nikal liya.`, `Strike rotate kar di.`, `Soft hands se ek run.`],
-        two: [`Gap me push kiya, do run complete.`, `Achhi running, two mil gaye.`, `Dono batsman tez bhaage, two.`],
-        three: [`Achhi running, teen run mil gaye.`, `Deep me ball gayi, three complete.`, `Fitness ka kaam, teen run.`],
-        other: [`${run} runs liye.`, `${run} run add hue.`, `${run} mil gaye.`],
-        score: `Score ${score}.`
-      },
-      hi: {
-        wicket: [`विकेट! ${type}${helper}. ${batter} आउट।`, `बड़ी सफलता! ${type}${helper}, ${batter} को लौटना होगा।`, `मैच का बड़ा पल, ${batter} ${type}${helper}।`],
-        wide: [`वाइड गेंद। एक अतिरिक्त रन।`, `लाइन बाहर रही, अंपायर ने वाइड दिया।`, `वाइड से एक रन जुड़ा।`],
-        wideRuns: [`वाइड, ${total} रन जुड़े।`, `${total} रन वाइड से मिले।`, `वाइड गेंद और ${total} रन।`],
-        no: [`नो बॉल। अब फ्री हिट आएगी।`, `ओवरस्टेप हुआ, नो बॉल।`, `${bowler} से नो बॉल।`],
-        noRuns: [`नो बॉल और ${run} रन। फ्री हिट आएगी।`, `नो बॉल पर ${run} रन भी मिल गए।`, `${run} रन नो बॉल से जुड़े।`],
-        bye: [`${total} बाई रन।`, `कीपर से चूक, ${total} बाई।`, `बाई से ${total} रन जुड़े।`],
-        lb: [`${total} लेग बाई रन।`, `पैड से लगी गेंद, ${total} लेग बाई।`, `लेग बाई से ${total} रन जुड़े।`],
-        six: [`छक्का! शानदार शॉट।`, `छक्का! गेंद सीमा रेखा के पार।`, `${batter} का बड़ा शॉट, छह रन।`],
-        four: [`चौका! गैप मिला और गेंद बाउंड्री तक।`, `चौका! बहुत अच्छी टाइमिंग।`, `${batter} ने बेहतरीन चौका निकाला।`],
-        dot: [`डॉट गेंद। गेंदबाज का अच्छा नियंत्रण।`, `कोई रन नहीं।`, `बल्लेबाज को जगह नहीं मिली।`],
-        one: [`एक रन लिया।`, `सिंगल मिल गया।`, `स्ट्राइक बदली।`],
-        two: [`दो रन पूरे।`, `गैप में खेला, दो रन।`, `अच्छी दौड़ से दो रन मिले।`],
-        three: [`तीन रन मिल गए।`, `बहुत अच्छी दौड़, तीन रन।`, `गेंद डीप में गई, तीन रन।`],
-        other: [`${run} रन लिए।`, `${run} रन जुड़े।`, `${run} रन मिले।`],
-        score: `स्कोर ${score}।`
-      }
-    };
-    const pack = packs[mode] || packs.en;
-    let lines;
-    if (flags.isWicket) lines = pack.wicket;
-    else if (flags.isWide) lines = total > 1 ? pack.wideRuns : pack.wide;
-    else if (flags.isNo) lines = run ? pack.noRuns : pack.no;
-    else if (flags.isBye) lines = pack.bye;
-    else if (flags.isLb) lines = pack.lb;
-    else if (run === 6) lines = pack.six;
-    else if (run === 4) lines = pack.four;
-    else if (run === 0) lines = pack.dot;
-    else if (run === 1) lines = pack.one;
-    else if (run === 2) lines = pack.two;
-    else if (run === 3) lines = pack.three;
-    else lines = pack.other;
-    const action = this.commentaryPick(lines, `${mode}-${label}-${batter}-${bowler}`);
-    return `${ballNo}: ${base}, ${action} ${pack.score}${chase ? " " + chase : ""}`;
-  },
-
-  commentaryText(ballNo, batter, bowler, label, flags = {}) {
-    const run = Number(flags.run || 0);
-    const score = `${this.state.runs}/${this.state.wkts}`;
-    const chase = this.state.inningNumber > 1 && this.state.target ? this.chaseLine() : "";
-    const base = `${bowler} to ${batter}`;
-    const mode = this.state.commentaryMode || $("commentaryMode")?.value || "en";
-    let action = "";
-    if (flags.isWicket) {
-      const type = flags.wicketInfo?.type || "Wicket";
-      const helper = flags.wicketInfo?.helper ? `, ${flags.wicketInfo.helper} involved` : "";
-      action = mode === "hi" ? `WICKET! ${type}${helper}. ${batter} आउट हुए.` : mode === "mix" ? `WICKET! ${type}${helper}. ${batter} ko jaana padega.` : `WICKET! ${type}${helper}. ${batter} has to go.`;
-    } else if (flags.isWide) {
-      action = mode === "hi" ? (flags.totalRuns > 1 ? `Wide, ${flags.totalRuns} रन जुड़े.` : "Wide ball. एक extra run.") : mode === "mix" ? (flags.totalRuns > 1 ? `Wide, ${flags.totalRuns} runs add hue.` : "Wide ball. Extra run added.") : (flags.totalRuns > 1 ? `Wide, ${flags.totalRuns} runs added.` : "Wide ball. Extra run added.");
-    } else if (flags.isNo) {
-      action = mode === "hi" ? (run ? `No ball aur ${run} रन. Free hit आएगी.` : "No ball. Free hit आएगी.") : mode === "mix" ? (run ? `No ball aur ${run} run${run > 1 ? "s" : ""}. Free hit coming.` : "No ball. Free hit coming.") : (run ? `No ball and ${run} run${run > 1 ? "s" : ""}. Free hit coming.` : "No ball. Free hit coming.");
-    } else if (flags.isBye) {
-      action = mode === "hi" ? `${flags.totalRuns} bye रन.` : `${flags.totalRuns} bye${flags.totalRuns > 1 ? "s" : ""}.`;
-    } else if (flags.isLb) {
-      action = mode === "hi" ? `${flags.totalRuns} leg bye रन.` : `${flags.totalRuns} leg bye${flags.totalRuns > 1 ? "s" : ""}.`;
-    } else if (run === 6) {
-      action = mode === "hi" ? "SIX! शानदार शॉट, गेंद सीमा रेखा के पार." : mode === "mix" ? "SIX! Zabardast hit, seedha boundary ke bahar." : "SIX! Clean strike, all the way.";
-    } else if (run === 4) {
-      action = mode === "hi" ? "FOUR! गैप मिला और गेंद तेजी से बाउंड्री तक." : mode === "mix" ? "FOUR! Gap mila aur ball boundary tak gayi." : "FOUR! Finds the gap and races away.";
-    } else if (run === 0) {
-      action = mode === "hi" ? "Dot ball. गेंदबाज का अच्छा नियंत्रण." : mode === "mix" ? "Dot ball. Bowler ka achha control." : "Dot ball. Good control from the bowler.";
-    } else if (run === 1) {
-      action = mode === "hi" ? "एक रन लिया." : mode === "mix" ? "Single nikal liya." : "Worked away for a single.";
-    } else if (run === 2) {
-      action = mode === "hi" ? "गैप में खेला, दो रन पूरे." : mode === "mix" ? "Gap me push kiya, do run complete." : "Pushed into the gap, they come back for two.";
-    } else if (run === 3) {
-      action = mode === "hi" ? "बेहतरीन running, तीन रन." : mode === "mix" ? "Achhi running, teen run mil gaye." : "Excellent running, three taken.";
-    } else {
-      action = mode === "hi" ? `${run} रन लिए.` : `${run} runs taken.`;
-    }
-    const scoreText = mode === "hi" ? `स्कोर ${score}.` : `Score ${score}.`;
-    return `${ballNo}: ${base}, ${action} ${scoreText}${chase ? " " + chase : ""}`;
+    return buildBallCommentary({ state: this.state, ballNo, batter, bowler, label, flags });
   },
   chaseLine() {
-    const need = Math.max(Number(this.state.target || 0) - Number(this.state.runs || 0), 0);
-    const ballsLeft = Math.max(Number(this.state.totalOvers || 20) * 6 - Number(this.state.balls || 0), 0);
-    if (!need) return "Target achieved.";
-    return `Need ${need} from ${ballsLeft} balls.`;
+    return buildChaseLine(this.state);
   },
   overCommentary(overNo, runs, wickets) {
-    const score = `${this.state.runs}/${this.state.wkts}`;
-    const wicketText = wickets ? `${wickets} wicket${wickets > 1 ? "s" : ""}` : "no wickets";
-    let note = "Steady over.";
-    if (wickets >= 2) note = "Major shift in momentum.";
-    else if (wickets === 1) note = "Breakthrough over.";
-    else if (runs >= 16) note = "Big over for the batting side.";
-    else if (runs <= 3) note = "Tidy over from the bowler.";
-    const chase = this.state.inningNumber > 1 && this.state.target ? ` ${this.chaseLine()}` : "";
-    return `End of over ${overNo}: ${runs} run${runs === 1 ? "" : "s"}, ${wicketText}. Score ${score}. ${note}${chase}`;
+    return buildOverCommentary({ state: this.state, overNo, runs, wickets });
   },
 
   bindWicketModal() {
@@ -1746,8 +1507,7 @@ window.app = {
       this.state.manualSavedAt = Date.now();
       this.state.lastManualSaveText = `${this.state.runs}/${this.state.wkts} (${overText(this.state.balls)})`;
 
-      const checkpoint = clone(this.state);
-      checkpoint.undoStack = [];
+      const checkpoint = storePayload(this.state, this.state.matchId, this.uid);
       localStorage.setItem(MANUAL_SCORE_KEY(checkpoint.matchId), JSON.stringify({
         matchId: checkpoint.matchId,
         savedAt: Date.now(),
@@ -1786,8 +1546,9 @@ window.app = {
   render() {
     const s = this.state = normalizeState(this.state);
     $("topTitle").textContent = s.matchTitle || "Cricket Admin";
-    $("topSub").textContent = s.matchId || "No match started";
-    $("topStatus").textContent = s.matchFinished ? "COMPLETE" : (s.status === "scheduled" ? "SCHEDULED" : (s.liveStarted ? (s.liveControl.mode || "LIVE").toUpperCase() : "NO LIVE"));
+    const superLabel = s.superOver?.active ? `SUPER OVER ${s.superOver.inning === 2 ? "CHASE" : "INNINGS 1"}` : "";
+    $("topSub").textContent = superLabel || s.matchId || "No match started";
+    $("topStatus").textContent = s.matchFinished ? "COMPLETE" : (s.status === "tied" ? "TIED" : (s.status === "super-over" ? "SUPER OVER" : (s.status === "scheduled" ? "SCHEDULED" : (s.liveStarted ? (s.liveControl.mode || "LIVE").toUpperCase() : "NO LIVE"))));
     $("topStatus").className = `status-pill ${s.matchFinished ? "complete" : (s.liveStarted ? "live" : "")}`;
     $("runs").textContent = s.runs; $("wkts").textContent = s.wkts; $("overs").textContent = overText(s.balls);
     $("crr").textContent = s.balls ? (s.runs / (s.balls / 6)).toFixed(2) : "0.00";
@@ -1910,11 +1671,93 @@ window.app = {
 
   async uploadImage(file, targetInput) { if (!file) return; if (!cloudinaryConfig.cloudName || cloudinaryConfig.cloudName.includes("YOUR")) return this.toast("Cloudinary configuration is required.", true); const fd = new FormData(); fd.append("file", file); fd.append("upload_preset", cloudinaryConfig.uploadPreset); try { const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudinaryConfig.cloudName}/image/upload`, { method: "POST", body: fd }); if (!res.ok) throw new Error("Cloudinary upload failed"); const json = await res.json(); $(targetInput).value = json.secure_url || json.url || ""; this.toast("Image uploaded."); } catch (e) { this.toast(e.message, true); } },
 
-  renderLeagueTeamChecks() { const source = this.editingLeagueId ? this.leagues.find(l => l.leagueId === this.editingLeagueId) : null; const selected = new Set((source?.teams || []).map(t => t.teamId).filter(Boolean)); $("leagueTeamChecks").innerHTML = this.teams.map(t => `<label><input type="checkbox" value="${t.teamId}" ${selected.has(t.teamId) ? "checked" : ""}> ${this.safe(t.name)}</label>`).join("") || "No teams"; },
+  renderLeagueTeamChecks() {
+    const source = this.editingLeagueId ? this.leagues.find(l => l.leagueId === this.editingLeagueId) : null;
+    const selected = this.leagueSelectedIds?.size ? new Set(this.leagueSelectedIds) : new Set((source?.teams || []).map(t => t.teamId).filter(Boolean));
+    document.querySelectorAll("#leagueTeamChecks input:checked").forEach(x => selected.add(x.value));
+    this.leagueSelectedIds = selected;
+    const term = ($("leagueTeamSearch")?.value || "").trim().toLowerCase();
+    const teams = term ? this.teams.filter(t => `${t.name || ""} ${t.shortName || ""}`.toLowerCase().includes(term)) : this.teams;
+    $("leagueTeamChecks").innerHTML = teams.map(t => `<label><input type="checkbox" value="${t.teamId}" ${selected.has(t.teamId) ? "checked" : ""}> ${this.safe(t.name)}</label>`).join("") || "No teams";
+    document.querySelectorAll("#leagueTeamChecks input").forEach(x => x.onchange = () => { if (x.checked) this.leagueSelectedIds.add(x.value); else this.leagueSelectedIds.delete(x.value); this.updateLeagueSelectedCount(); this.fillManualPointTeams(); this.saveLeagueDraftLocal(); });
+    this.updateLeagueSelectedCount();
+    this.fillManualPointTeams();
+  },
+  updateLeagueSelectedCount() {
+    if ($("leagueSelectedCount")) $("leagueSelectedCount").textContent = `${this.leagueSelectedIds?.size || 0} selected`;
+  },
+  setVisibleLeagueTeams(checked) {
+    document.querySelectorAll("#leagueTeamChecks input").forEach(x => { x.checked = checked; if (checked) this.leagueSelectedIds.add(x.value); else this.leagueSelectedIds.delete(x.value); });
+    this.updateLeagueSelectedCount();
+    this.fillManualPointTeams();
+    this.saveLeagueDraftLocal();
+  },
   includeEliminatorOn() { const el = $("includeEliminator"); return el?.type === "checkbox" ? el.checked : el?.value !== "off"; },
   currentLeague() { return (this.editingLeagueId && this.leagues.find(l => l.leagueId === this.editingLeagueId)) || this.state.league || this.leagues.find(l => l.leagueId === $("setupLeague")?.value) || this.leagues[0] || null; },
   currentSchedule() { return this.draftSchedule || this.currentLeague()?.schedule || []; },
+  leaguePlayoffsLocked() { return this.playoffLockedDraft !== undefined ? !!this.playoffLockedDraft : !!this.currentLeague()?.playoffLocked; },
   teamOptions(selected = "") { return `<option value="">TBA</option>` + this.teams.map(t => `<option value="${t.teamId}" ${t.teamId === selected ? "selected" : ""}>${this.safe(t.name)}</option>`).join(""); },
+
+  leaguePointsRulesFromForm() {
+    return { win: Number($("pointsWin")?.value || 2), tie: Number($("pointsTie")?.value || 1), noResult: Number($("pointsNR")?.value || 1), bonus: !!$("bonusPoint")?.checked };
+  },
+  applyLeagueTemplate(type) {
+    if (type === "ipl") { $("leagueFormat").value = "double"; $("iplPlayoffs").checked = true; $("includeEliminator").value = "on"; $("leagueOvers").value = 20; $("leagueStatus").value = "active"; }
+    else if (type === "simple") { $("leagueFormat").value = "single"; $("iplPlayoffs").checked = false; $("includeEliminator").value = "off"; $("leagueOvers").value = 20; $("leagueStatus").value = "active"; }
+    else if (type === "cup") { $("leagueFormat").value = "knockout"; $("iplPlayoffs").checked = false; $("includeEliminator").value = "off"; $("leagueOvers").value = 20; $("leagueStatus").value = "active"; }
+    this.saveLeagueDraftLocal();
+  },
+  selectedLeagueTeamObjs() {
+    return [...(this.leagueSelectedIds || new Set())].map(id => this.teamObj(this.teamById(id))).filter(Boolean);
+  },
+  fillManualPointTeams() {
+    if (!$("manualPointTeam")) return;
+    const teams = this.selectedLeagueTeamObjs();
+    $("manualPointTeam").innerHTML = teams.map(t => `<option value="${this.safe(t.name)}">${this.safe(t.name)}</option>`).join("") || `<option value="">Select team</option>`;
+  },
+  saveLeagueDraftLocal() {
+    try {
+      if (!$("leagueName")) return;
+      const draft = {
+        editingLeagueId: this.editingLeagueId || "",
+        fields: {
+          leagueName: $("leagueName").value, leagueShort: $("leagueShort").value, leagueSeason: $("leagueSeason").value, leagueLogo: $("leagueLogo").value,
+          leagueOvers: $("leagueOvers").value, leagueFormat: $("leagueFormat").value, includeEliminator: $("includeEliminator").value,
+          iplPlayoffs: $("iplPlayoffs").checked, leagueStatus: $("leagueStatus")?.value || "active",
+          leagueStartDate: $("leagueStartDate")?.value || "", leagueDefaultTime: $("leagueDefaultTime")?.value || "", leagueGapDays: $("leagueGapDays")?.value || "1", leagueVenues: $("leagueVenues")?.value || "",
+          pointsWin: $("pointsWin")?.value || "2", pointsTie: $("pointsTie")?.value || "1", pointsNR: $("pointsNR")?.value || "1", bonusPoint: !!$("bonusPoint")?.checked
+        },
+        playoffLocked: this.leaguePlayoffsLocked(),
+        teamIds: [...(this.leagueSelectedIds || new Set())],
+        schedule: this.draftSchedule || []
+      };
+      localStorage.setItem(LEAGUE_DRAFT_KEY, JSON.stringify(draft));
+    } catch (error) { console.warn("League draft save failed", error); }
+  },
+  restoreLeagueDraftLocal() {
+    try {
+      const draft = JSON.parse(localStorage.getItem(LEAGUE_DRAFT_KEY) || "{}");
+      if (!draft?.fields || (!draft.schedule?.length && !draft.fields.leagueName)) return false;
+      this.editingLeagueId = draft.editingLeagueId || "";
+      this.draftSchedule = draft.schedule || [];
+      this.leagueSelectedIds = new Set(draft.teamIds || []);
+      this.playoffLockedDraft = !!draft.playoffLocked;
+      Object.entries(draft.fields).forEach(([id, value]) => {
+        if (!$(id)) return;
+        if ($(id).type === "checkbox") $(id).checked = !!value;
+        else $(id).value = value;
+      });
+      this.renderLeagueTeamChecks();
+      document.querySelectorAll("#leagueTeamChecks input").forEach(x => x.checked = this.leagueSelectedIds.has(x.value));
+      if ($("lockPlayoffsBtn")) $("lockPlayoffsBtn").textContent = this.leaguePlayoffsLocked() ? "Unlock Playoffs" : "Lock Playoffs";
+      this.updateLeagueSelectedCount();
+      this.fillManualPointTeams();
+      return true;
+    } catch (error) {
+      console.warn("League draft restore failed", error);
+      return false;
+    }
+  },
 
   openLeagueEditor(title = "Create League") {
     if ($("publicLeagueTabs")?.checked === false) {
@@ -1924,18 +1767,35 @@ window.app = {
     $("leagueEditor")?.classList.add("show");
     if ($("leagueEditorTitle")) $("leagueEditorTitle").textContent = title;
   },
+  openLeagueSubModal(id) {
+    if (id === "leagueTeamsModal") this.renderLeagueTeamChecks();
+    if (id === "leagueManualPointsModal") this.fillManualPointTeams();
+    if (id === "leaguePlayoffsModal" && $("lockPlayoffsBtn")) $("lockPlayoffsBtn").textContent = this.leaguePlayoffsLocked() ? "Unlock Playoffs" : "Lock Playoffs";
+    $(id)?.classList.add("show");
+  },
 
   newLeagueEditor() {
     this.editingLeagueId = "";
     this.editingFixtureIndex = null;
     this.draftSchedule = [];
+    this.leagueSelectedIds = new Set();
+    this.playoffLockedDraft = false;
     ["leagueName", "leagueShort", "leagueSeason", "leagueLogo"].forEach(id => $(id).value = "");
     $("leagueOvers").value = 20;
     $("leagueFormat").value = "single";
     $("includeEliminator").value = "on";
     $("iplPlayoffs").checked = true;
+    if ($("leagueTemplate")) $("leagueTemplate").value = "custom";
+    if ($("leagueStatus")) $("leagueStatus").value = "active";
+    if ($("pointsWin")) $("pointsWin").value = 2;
+    if ($("pointsTie")) $("pointsTie").value = 1;
+    if ($("pointsNR")) $("pointsNR").value = 1;
+    if ($("bonusPoint")) $("bonusPoint").checked = false;
+    ["leagueStartDate", "leagueDefaultTime", "leagueVenues"].forEach(id => { if ($(id)) $(id).value = ""; });
+    if ($("leagueGapDays")) $("leagueGapDays").value = 1;
     this.updatePublicLeagueTabsButton();
     document.querySelectorAll("#leagueTeamChecks input").forEach(x => x.checked = false);
+    this.restoreLeagueDraftLocal();
     this.openLeagueEditor("Create League");
     this.renderLeagueSchedule();
   },
@@ -1945,6 +1805,8 @@ window.app = {
     const league = this.leagues.find(l => l.leagueId === id);
     if (!league) return this.toast("Select a league first.", true);
     this.editingLeagueId = league.leagueId;
+    this.playoffLockedDraft = !!league.playoffLocked;
+    this.leagueSelectedIds = new Set((league.teams || []).map(t => t.teamId).filter(Boolean));
     this.editingFixtureIndex = null;
     this.draftSchedule = clone(league.schedule || []);
     $("leagueName").value = league.name || "";
@@ -1955,11 +1817,24 @@ window.app = {
     $("leagueFormat").value = league.format || "single";
     $("includeEliminator").value = league.includeEliminator === false ? "off" : "on";
     $("iplPlayoffs").checked = league.playoffs !== false;
+    if ($("leagueTemplate")) $("leagueTemplate").value = league.template || "custom";
+    if ($("leagueStatus")) $("leagueStatus").value = league.status || "active";
+    const rules = league.pointsRules || {};
+    if ($("pointsWin")) $("pointsWin").value = rules.win ?? 2;
+    if ($("pointsTie")) $("pointsTie").value = rules.tie ?? 1;
+    if ($("pointsNR")) $("pointsNR").value = rules.noResult ?? 1;
+    if ($("bonusPoint")) $("bonusPoint").checked = !!rules.bonus;
+    if ($("leagueStartDate")) $("leagueStartDate").value = league.scheduleStartDate || "";
+    if ($("leagueDefaultTime")) $("leagueDefaultTime").value = league.defaultMatchTime || "";
+    if ($("leagueGapDays")) $("leagueGapDays").value = league.scheduleGapDays ?? 1;
+    if ($("leagueVenues")) $("leagueVenues").value = (league.venues || []).join(", ");
+    if ($("lockPlayoffsBtn")) $("lockPlayoffsBtn").textContent = league.playoffLocked ? "Unlock Playoffs" : "Lock Playoffs";
     $("publicLeagueTabs").checked = league.showPublicLeague !== false;
     localStorage.setItem(PUBLIC_LEAGUE_TABS_KEY, $("publicLeagueTabs").checked ? "on" : "off");
     this.updatePublicLeagueTabsButton();
-    const ids = new Set((league.teams || []).map(t => t.teamId).filter(Boolean));
-    document.querySelectorAll("#leagueTeamChecks input").forEach(x => x.checked = ids.has(x.value));
+    document.querySelectorAll("#leagueTeamChecks input").forEach(x => x.checked = this.leagueSelectedIds.has(x.value));
+    this.updateLeagueSelectedCount();
+    this.fillManualPointTeams();
     this.openLeagueEditor("Edit League");
     this.renderLeagueSchedule();
   },
@@ -1975,39 +1850,82 @@ window.app = {
   },
 
   generateSchedule() {
-    const ids = [...document.querySelectorAll("#leagueTeamChecks input:checked")].map(x => x.value);
-    const teams = ids.map(id => this.teamById(id)).filter(Boolean);
+    const teams = this.selectedLeagueTeamObjs().map(t => this.teamById(t.teamId)).filter(Boolean);
     if (teams.length < 2) return this.toast("Select at least two teams.", true);
     if (this.currentSchedule().length && !confirm("Generate a new schedule? The current draft schedule will be replaced.")) return;
     const format = $("leagueFormat").value;
     const schedule = [];
     let n = 1;
+    const applySmart = (fixture) => this.applySmartFixtureDefaults(fixture, n - 1);
 
     if (format === "knockout") {
       const round = teams.length <= 2 ? "Final" : (teams.length <= 4 ? "Semi Final" : "Knockout");
       for (let i = 0; i < teams.length; i += 2) {
-        schedule.push({ id: makeId("fix"), stage: i + 1 >= teams.length ? "Bye" : round, round, teamA: this.teamObj(teams[i]), teamB: this.teamObj(teams[i + 1]) || { name: "TBA" }, overs: Number($("leagueOvers").value || 20), venue: "", matchDate: "", matchTime: "", status: "pending", matchNo: n++ });
+        schedule.push(applySmart({ id: makeId("fix"), stage: i + 1 >= teams.length ? "Bye" : round, round, teamA: this.teamObj(teams[i]), teamB: this.teamObj(teams[i + 1]) || { name: "TBA" }, overs: Number($("leagueOvers").value || 20), venue: "", matchDate: "", matchTime: "", status: "pending", matchNo: n++ }));
       }
-      if (teams.length > 2) schedule.push({ id: makeId("fix"), stage: "Final", round: "Final", teamA: { name: "Winner SF 1" }, teamB: { name: "Winner SF 2" }, overs: Number($("leagueOvers").value || 20), venue: "", matchDate: "", matchTime: "", status: "pending", matchNo: n++ });
+      if (teams.length > 2) schedule.push(applySmart({ id: makeId("fix"), stage: "Final", round: "Final", teamA: { name: "Winner SF 1" }, teamB: { name: "Winner SF 2" }, overs: Number($("leagueOvers").value || 20), venue: "", matchDate: "", matchTime: "", status: "pending", matchNo: n++ }));
     } else {
       const rounds = format === "double" ? 2 : 1;
       for (let r = 1; r <= rounds; r++) for (let i = 0; i < teams.length; i++) for (let j = i + 1; j < teams.length; j++) {
-        schedule.push({ id: makeId("fix"), stage: "League", round: `Round ${r}`, teamA: r === 1 ? this.teamObj(teams[i]) : this.teamObj(teams[j]), teamB: r === 1 ? this.teamObj(teams[j]) : this.teamObj(teams[i]), overs: Number($("leagueOvers").value || 20), venue: "", matchDate: "", matchTime: "", status: "pending", matchNo: n++ });
+        schedule.push(applySmart({ id: makeId("fix"), stage: "League", round: `Round ${r}`, teamA: r === 1 ? this.teamObj(teams[i]) : this.teamObj(teams[j]), teamB: r === 1 ? this.teamObj(teams[j]) : this.teamObj(teams[i]), overs: Number($("leagueOvers").value || 20), venue: "", matchDate: "", matchTime: "", status: "pending", matchNo: n++ }));
       }
       if ($("iplPlayoffs").checked) {
         const stages = this.includeEliminatorOn() ? ["Qualifier 1", "Eliminator", "Qualifier 2", "Final"] : ["Qualifier 1", "Qualifier 2", "Final"];
-        stages.forEach(stage => schedule.push({ id: makeId("fix"), stage, round: "Playoffs", teamA: { name: "TBA" }, teamB: { name: "TBA" }, overs: Number($("leagueOvers").value || 20), venue: "", matchDate: "", matchTime: "", status: "pending", matchNo: n++ }));
+        stages.forEach(stage => schedule.push(applySmart({ id: makeId("fix"), stage, round: "Playoffs", teamA: { name: "TBA" }, teamB: { name: "TBA" }, overs: Number($("leagueOvers").value || 20), venue: "", matchDate: "", matchTime: "", status: "pending", matchNo: n++ })));
       }
     }
     this.draftSchedule = schedule;
     this.editingFixtureIndex = null;
+    this.saveLeagueDraftLocal();
     this.renderLeagueSchedule();
   },
 
+  applySmartFixtureDefaults(fixture, index) {
+    const start = $("leagueStartDate")?.value || "";
+    const time = $("leagueDefaultTime")?.value || "";
+    const gap = Math.max(Number($("leagueGapDays")?.value || 0), 0);
+    const venues = ($("leagueVenues")?.value || "").split(",").map(x => x.trim()).filter(Boolean);
+    if (start) {
+      const date = new Date(`${start}T00:00:00`);
+      date.setDate(date.getDate() + (index * gap));
+      fixture.matchDate = date.toISOString().slice(0, 10);
+    }
+    if (time) fixture.matchTime = time;
+    if (venues.length) fixture.venue = venues[index % venues.length];
+    return fixture;
+  },
+
   async saveLeagueForm() {
-    const selectedTeams = [...document.querySelectorAll("#leagueTeamChecks input:checked")].map(x => this.teamObj(this.teamById(x.value))).filter(Boolean);
+    const selectedTeams = this.selectedLeagueTeamObjs();
     const existing = (this.editingLeagueId && this.leagues.find(l => l.leagueId === this.editingLeagueId)) || (this.state.league?.leagueId ? this.state.league : null);
-    const league = { leagueId: this.editingLeagueId || existing?.leagueId || undefined, name: $("leagueName").value.trim() || existing?.name || "Cricket League", shortName: $("leagueShort").value.trim(), season: $("leagueSeason").value.trim(), logo: $("leagueLogo").value.trim(), defaultOvers: Number($("leagueOvers").value || 20), format: $("leagueFormat").value, playoffs: $("iplPlayoffs").checked, includeEliminator: this.includeEliminatorOn(), showPublicLeague: $("publicLeagueTabs").checked, teams: selectedTeams.length ? selectedTeams : (existing?.teams || []), schedule: this.draftSchedule || existing?.schedule || [], pointsTable: existing?.pointsTable || this.state.pointsTable || {}, pointsAppliedMatchIds: existing?.pointsAppliedMatchIds || this.state.league?.pointsAppliedMatchIds || {}, status: "active" };
+    const schedule = this.draftSchedule || existing?.schedule || [];
+    const conflicts = this.leagueScheduleConflicts(schedule);
+    if (conflicts.length && !confirm(`Schedule has ${conflicts.length} conflict(s). Save anyway?`)) return;
+    const league = {
+      leagueId: this.editingLeagueId || existing?.leagueId || undefined,
+      name: $("leagueName").value.trim() || existing?.name || "Cricket League",
+      shortName: $("leagueShort").value.trim(),
+      season: $("leagueSeason").value.trim(),
+      logo: $("leagueLogo").value.trim(),
+      defaultOvers: Number($("leagueOvers").value || 20),
+      format: $("leagueFormat").value,
+      template: $("leagueTemplate")?.value || "custom",
+      playoffs: $("iplPlayoffs").checked,
+      includeEliminator: this.includeEliminatorOn(),
+      playoffLocked: this.playoffLockedDraft !== undefined ? !!this.playoffLockedDraft : !!existing?.playoffLocked,
+      showPublicLeague: $("publicLeagueTabs").checked,
+      teams: selectedTeams.length ? selectedTeams : (existing?.teams || []),
+      schedule,
+      pointsRules: this.leaguePointsRulesFromForm(),
+      manualPointAdjustments: existing?.manualPointAdjustments || [],
+      pointsTable: existing?.pointsTable || this.state.pointsTable || {},
+      pointsAppliedMatchIds: existing?.pointsAppliedMatchIds || this.state.league?.pointsAppliedMatchIds || {},
+      scheduleStartDate: $("leagueStartDate")?.value || "",
+      defaultMatchTime: $("leagueDefaultTime")?.value || "",
+      scheduleGapDays: Number($("leagueGapDays")?.value || 1),
+      venues: ($("leagueVenues")?.value || "").split(",").map(x => x.trim()).filter(Boolean),
+      status: $("leagueStatus")?.value || "active"
+    };
     await saveLeague(league);
     this.state.league = league;
     this.state.showPublicLeague = $("publicLeagueTabs").checked;
@@ -2017,6 +1935,7 @@ window.app = {
       await this.saveAll(true);
     }
     this.toast("League saved.");
+    localStorage.removeItem(LEAGUE_DRAFT_KEY);
     $("leagueEditor")?.classList.remove("show");
     this.renderLeagueSchedule();
   },
@@ -2024,12 +1943,62 @@ window.app = {
   clearLeagueForm() {
     const hasData = this.currentSchedule().length || ["leagueName", "leagueShort", "leagueSeason", "leagueLogo"].some(id => $(id).value.trim());
     if (hasData && !confirm("Clear the draft form? The saved Firebase league will not change until you save.")) return;
+    localStorage.removeItem(LEAGUE_DRAFT_KEY);
     ["leagueName", "leagueShort", "leagueSeason", "leagueLogo"].forEach(id => $(id).value = "");
     this.updatePublicLeagueTabsButton();
     this.editingLeagueId = "";
     this.editingFixtureIndex = null;
     this.draftSchedule = [];
     this.renderLeagueSchedule();
+  },
+
+  leagueScheduleConflicts(schedule = this.currentSchedule()) {
+    const seen = new Map();
+    const conflicts = [];
+    schedule.forEach((m, i) => {
+      const when = [m.matchDate, m.matchTime].filter(Boolean).join(" ");
+      if (!when) return;
+      [m.teamA, m.teamB].forEach(team => {
+        const id = team?.teamId || team?.name || "";
+        if (!id || /TBA|Winner|Loser|Rank/i.test(id)) return;
+        const key = `${id}|${when}`;
+        if (seen.has(key)) conflicts.push(`Match ${seen.get(key)} and ${m.matchNo || i + 1}: ${team.name || id} at ${when}`);
+        else seen.set(key, m.matchNo || i + 1);
+      });
+    });
+    return conflicts;
+  },
+  applyManualPoints() {
+    const team = $("manualPointTeam")?.value || "";
+    if (!team) return this.toast("Select a team for points adjustment.", true);
+    const league = this.currentLeague() || {};
+    const table = clone(league.pointsTable || this.state.pointsTable || {});
+    if (!table[team]) table[team] = { P: 0, W: 0, L: 0, T: 0, NR: 0, Pts: 0, NRR: 0, manualNRR: 0 };
+    const pts = Number($("manualPointDelta")?.value || 0);
+    const nrr = Number($("manualNrrDelta")?.value || 0);
+    table[team].Pts = Number(table[team].Pts || 0) + pts;
+    table[team].manualNRR = Number(table[team].manualNRR || 0) + nrr;
+    table[team].adjustReason = $("manualPointReason")?.value || "";
+    if (this.editingLeagueId) {
+      const existing = this.leagues.find(l => l.leagueId === this.editingLeagueId);
+      if (existing) {
+        existing.pointsTable = table;
+        existing.manualPointAdjustments = [...(existing.manualPointAdjustments || []), { team, pts, nrr, reason: table[team].adjustReason, at: Date.now() }];
+      }
+    }
+    this.state.pointsTable = table;
+    if (this.state.league) this.state.league.pointsTable = table;
+    this.toast("Manual points adjusted. Save League to keep it.");
+    this.renderLeagueSchedule();
+    this.saveLeagueDraftLocal();
+  },
+  togglePlayoffLock() {
+    const league = this.currentLeague();
+    const locked = !this.leaguePlayoffsLocked();
+    this.playoffLockedDraft = locked;
+    if (league) league.playoffLocked = locked;
+    if ($("lockPlayoffsBtn")) $("lockPlayoffsBtn").textContent = locked ? "Unlock Playoffs" : "Lock Playoffs";
+    this.toast(`Playoffs ${locked ? "locked" : "unlocked"}. Save League to keep it.`);
   },
 
   editFixture(index) {
@@ -2050,6 +2019,7 @@ window.app = {
     else if (field === "overs" || field === "matchNo") fixture[field] = Number(value || 0);
     else fixture[field] = value;
     this.draftSchedule = schedule;
+    this.saveLeagueDraftLocal();
     this.renderLeagueSchedule();
   },
 
@@ -2067,6 +2037,8 @@ window.app = {
     }
     const updated = { ...league, schedule: this.draftSchedule };
     if (String(fixture.status || "").toLowerCase() === "no-result") this.applyNoResultFixture(updated, fixture);
+    const conflicts = this.leagueScheduleConflicts(this.draftSchedule);
+    if (conflicts.length && !confirm(`Schedule has ${conflicts.length} conflict(s). Save fixture anyway?`)) return;
     await saveLeague(updated);
     if (this.state.league?.leagueId === updated.leagueId) this.state.league = updated;
     if (this.state.matchId && this.state.leagueId === updated.leagueId && !this.state.matchFinished) await this.saveAll(true);
@@ -2082,12 +2054,13 @@ window.app = {
     const a = fixture.teamA?.name || "";
     const b = fixture.teamB?.name || "";
     if (!a || !b || a === "TBA" || b === "TBA") return;
+    const nrPts = Number(league.pointsRules?.noResult ?? this.leaguePointsRulesFromForm().noResult ?? 1);
     const impact = {
       matchId: key,
       status: "no-result",
       teams: {
-        [a]: { P: 1, W: 0, L: 0, T: 0, NR: 1, Pts: 1, RF: 0, BF: 0, RA: 0, BA: 0 },
-        [b]: { P: 1, W: 0, L: 0, T: 0, NR: 1, Pts: 1, RF: 0, BF: 0, RA: 0, BA: 0 }
+        [a]: { P: 1, W: 0, L: 0, T: 0, NR: 1, Pts: nrPts, RF: 0, BF: 0, RA: 0, BA: 0 },
+        [b]: { P: 1, W: 0, L: 0, T: 0, NR: 1, Pts: nrPts, RF: 0, BF: 0, RA: 0, BA: 0 }
       }
     };
     this.applyPointsImpact(league, impact, 1);
@@ -2124,6 +2097,7 @@ window.app = {
   },
 
   autoFillPlayoffs() {
+    if (this.leaguePlayoffsLocked()) return this.toast("Playoffs are locked. Unlock before auto-fill.", true);
     const schedule = this.currentSchedule();
     const pts = this.state.pointsTable || this.currentLeague()?.pointsTable || {};
     const ranked = Object.entries(pts).sort((a, b) => (Number(b[1].Pts || 0) - Number(a[1].Pts || 0)) || (Number(this.nrr(b[1])) - Number(this.nrr(a[1])))).map(([name]) => this.teams.find(t => t.name === name) || { name });
@@ -2137,6 +2111,7 @@ window.app = {
     setStage("Qualifier 2", { name: "Loser Qualifier 1" }, { name: this.includeEliminatorOn() ? "Winner Eliminator" : "Rank 3" });
     setStage("Final", { name: "Winner Qualifier 1" }, { name: "Winner Qualifier 2" });
     this.draftSchedule = schedule;
+    this.saveLeagueDraftLocal();
     this.renderLeagueSchedule();
     this.toast("Playoff fixtures auto-filled.");
   },
@@ -2147,7 +2122,12 @@ window.app = {
     const done = current.filter(x => ["completed", "done"].includes(String(x.status || "").toLowerCase())).length;
     const pending = current.length - done;
     const next = current.find(x => !["completed", "done"].includes(String(x.status || "").toLowerCase()));
-    if ($("leagueDashboard")) $("leagueDashboard").innerHTML = `<div><span>Matches</span><b>${current.length}</b></div><div><span>Completed</span><b>${done}</b></div><div><span>Pending</span><b>${pending}</b></div><div><span>Next</span><b>${this.safe(next ? `${next.teamA?.name || "TBA"} vs ${next.teamB?.name || "TBA"}` : "-")}</b></div>`;
+    const top = Object.entries(pts).sort((a,b)=>Number(b[1].Pts||0)-Number(a[1].Pts||0)||Number(this.nrr(b[1]))-Number(this.nrr(a[1])))[0]?.[0] || "-";
+    const completePct = current.length ? Math.round((done / current.length) * 100) : 0;
+    const conflicts = this.leagueScheduleConflicts(current);
+    if ($("lockPlayoffsBtn")) $("lockPlayoffsBtn").textContent = this.leaguePlayoffsLocked() ? "Unlock Playoffs" : "Lock Playoffs";
+    if ($("leagueDashboard")) $("leagueDashboard").innerHTML = `<div><span>Matches</span><b>${current.length}</b></div><div><span>Completed</span><b>${completePct}%</b></div><div><span>Pending</span><b>${pending}</b></div><div><span>Top Team</span><b>${this.safe(top)}</b></div><div><span>Next</span><b>${this.safe(next ? `${next.teamA?.name || "TBA"} vs ${next.teamB?.name || "TBA"}` : "-")}</b></div><div><span>Conflicts</span><b>${conflicts.length}</b></div>`;
+    const alert = conflicts.length ? `<div class="fixture-alert">${this.safe(conflicts.slice(0, 3).join(" | "))}</div>` : "";
     $("leagueSchedule").innerHTML = current.length ? current.map((m, i) => {
       const result = m.result || m.winnerText || "";
       const score = [m.firstInnings, m.secondInnings].filter(Boolean).join(" | ");
@@ -2156,11 +2136,13 @@ window.app = {
       const when = [m.matchDate, m.matchTime].filter(Boolean).join(" ");
       const summary = [this.safe(m.stage || "League"), this.safe(m.round || ""), when ? this.safe(when) : "", m.venue ? this.safe(m.venue) : "", `Overs ${Number(m.overs || 20)}`].filter(Boolean).join(" | ");
       const controls = isEditing ? `<div class="grid3"><div><label>Team A</label><select onchange="app.updateFixture(${i}, 'teamA', this.value)" ${disabled}>${this.teamOptions(m.teamA?.teamId || "")}</select></div><div><label>Team B</label><select onchange="app.updateFixture(${i}, 'teamB', this.value)" ${disabled}>${this.teamOptions(m.teamB?.teamId || "")}</select></div><div><label>Status</label><select onchange="app.updateFixture(${i}, 'status', this.value)"><option value="pending" ${String(m.status || "pending") === "pending" ? "selected" : ""}>Pending</option><option value="live" ${m.status === "live" ? "selected" : ""}>Live</option><option value="completed" ${m.status === "completed" ? "selected" : ""}>Completed</option><option value="cancelled" ${m.status === "cancelled" ? "selected" : ""}>Cancelled</option><option value="no-result" ${m.status === "no-result" ? "selected" : ""}>No Result</option></select></div></div><div class="grid3"><div><label>Stage</label><input value="${this.safe(m.stage || "")}" onchange="app.updateFixture(${i}, 'stage', this.value)" ${disabled}></div><div><label>Date</label><input type="date" value="${this.safe(m.matchDate || "")}" onchange="app.updateFixture(${i}, 'matchDate', this.value)" ${disabled}></div><div><label>Time</label><input type="time" value="${this.safe(m.matchTime || "")}" onchange="app.updateFixture(${i}, 'matchTime', this.value)" ${disabled}></div></div><div class="grid2"><div><label>Overs</label><input type="number" min="1" value="${Number(m.overs || 20)}" onchange="app.updateFixture(${i}, 'overs', this.value)" ${disabled}></div><div><label>Match No</label><input type="number" min="1" value="${Number(m.matchNo || i + 1)}" onchange="app.updateFixture(${i}, 'matchNo', this.value)" ${disabled}></div></div><label>Venue</label><input value="${this.safe(m.venue || "")}" onchange="app.updateFixture(${i}, 'venue', this.value)" ${disabled}><div class="actions"><button class="btn primary" onclick="app.saveFixture(${i})">Save Fixture</button><button class="btn light" onclick="app.cancelFixtureEdit()">Close</button><button class="btn" onclick="app.useFixtureSetup(${i})" ${disabled}>Use Setup</button></div>` : `<small>${summary}${result ? " | " + this.safe(result) : ""}${score ? " | " + this.safe(score) : ""}</small><div class="actions"><button class="btn" onclick="app.editFixture(${i})">Edit</button><button class="btn primary" onclick="app.useFixtureSetup(${i})" ${disabled}>Use Setup</button></div>`;
-      return `<div class="item fixture-row"><div class="fixture-head"><b>${Number(m.matchNo || i + 1)}. ${this.safe(m.teamA?.name || m.teamA || "TBA")} vs ${this.safe(m.teamB?.name || m.teamB || "TBA")}</b><span>${this.safe(m.status || "pending")}</span></div>${controls}</div>`;
+      const playoffClass = /qualifier|eliminator|final|semi/i.test(`${m.stage || ""} ${m.round || ""}`) && this.leaguePlayoffsLocked() ? " locked-playoff" : "";
+      return `<div class="item fixture-row${playoffClass}"><div class="fixture-head"><b>${Number(m.matchNo || i + 1)}. ${this.safe(m.teamA?.name || m.teamA || "TBA")} vs ${this.safe(m.teamB?.name || m.teamB || "TBA")}</b><span>${this.safe(m.status || "pending")}</span></div>${controls}</div>`;
     }).join("") : "<div class='item'>No schedule</div>";
+    $("leagueSchedule").innerHTML = alert + $("leagueSchedule").innerHTML;
     $("leaguePoints").innerHTML = Object.entries(pts).map(([team, p]) => `<tr><td>${this.safe(team)}</td><td>${p.P || 0}</td><td>${p.W || 0}</td><td>${p.L || 0}</td><td>${p.T || 0}</td><td>${p.NR || 0}</td><td>${p.Pts || 0}</td><td>${this.nrr(p)}</td></tr>`).join("") || `<tr><td colspan="8">No points</td></tr>`;
   },
-  nrr(p) { const rf = p.BF ? p.RF / (p.BF / 6) : 0; const ra = p.BA ? p.RA / (p.BA / 6) : 0; return (rf - ra).toFixed(3); },
+  nrr(p) { const rf = p.BF ? p.RF / (p.BF / 6) : 0; const ra = p.BA ? p.RA / (p.BA / 6) : 0; return (rf - ra + Number(p.manualNRR || 0)).toFixed(3); },
 
   renderHealthCheck(showToast = false) {
     if (!$("healthSummary") || !$("healthList")) return;

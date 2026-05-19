@@ -247,10 +247,16 @@ th:first-child{
 }
 
 .downloading-pdf .page{
+  width:980px;
   max-width:980px;
   margin:0 auto;
   border:0;
   box-shadow:none;
+}
+
+.downloading-pdf #content{
+  width:920px;
+  max-width:920px;
 }
 
 .downloading-pdf .actions{
@@ -267,6 +273,8 @@ th:first-child{
 }
 
 .downloading-pdf .top{
+  display:flex;
+  justify-content:center;
   padding-bottom:8px;
   border-bottom-width:3px;
 }
@@ -283,6 +291,8 @@ th:first-child{
 }
 
 .downloading-pdf .scoreline{
+  display:grid;
+  grid-template-columns:1fr 1fr;
   gap:9px;
   margin:10px 0;
 }
@@ -309,6 +319,9 @@ th:first-child{
 }
 
 .downloading-pdf table{
+  display:table;
+  overflow:visible;
+  white-space:normal;
   font-size:11px;
   margin-bottom:9px;
 }
@@ -323,6 +336,8 @@ th:first-child{
 }
 
 .downloading-pdf .grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
   gap:8px;
 }
 
@@ -494,7 +509,7 @@ function bowlTable(stats = {}) {
           entries.length
             ? entries.map(([name, s]) => `
               <tr>
-                <td><b>${safe(name)}</b></td>
+                <td><b>${safe(s.playerName || s.name || name)}</b></td>
                 <td>${overText(s.balls || 0)}</td>
                 <td>${Number(s.runs || 0)}</td>
                 <td>${Number(s.wkts || 0)}</td>
@@ -806,7 +821,7 @@ window.downloadScorecardPdf = async function () {
       scale: 2,
       useCORS: true,
       backgroundColor: '#ffffff',
-      windowWidth: content.scrollWidth
+      windowWidth: 980
     });
 
     const pdf = new jsPDF('p', 'mm', 'a4');

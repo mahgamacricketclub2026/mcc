@@ -138,25 +138,43 @@ export function listenPublicSettings(callback, onError) {
 }
 
 export async function saveMatch(matchId, payload) {
-  await setDoc(doc(firestoreDb, "matches", matchId), { ...payload, matchId, updatedAt: serverTimestamp() }, { merge: true });
+  const clean = stripUndefined(payload);
+  const { summary } = splitMatchPayload(clean);
+  await Promise.all([
+    setDoc(doc(firestoreDb, "matches", matchId), { ...summary, matchId, updatedAt: serverTimestamp() }, { merge: true }),
+    saveScorecardParts(matchId, clean)
+  ]);
 }
 
 export function listenMatch(matchId, callback, onError) {
   if (!matchId) return () => {};
-  return onSnapshot(doc(firestoreDb, "matches", matchId), (snap) => callback(snap.exists() ? { id: snap.id, ...snap.data() } : null), onError);
+  return onSnapshot(doc(firestoreDb, "matches", matchId), async (snap) => {
+    if (!snap.exists()) return callback(null);
+    const data = { id: snap.id, ...snap.data() };
+    if (data.hasSplitScorecard) {
+      const stored = await getStoredScorecard(matchId).catch(() => null);
+      return callback(stored?.fullScorecardData ? { ...data, ...stored.fullScorecardData } : data);
+    }
+    callback(data);
+  }, onError);
 }
 
 export async function getMatch(matchId) {
   const snap = await getDoc(doc(firestoreDb, "matches", matchId));
-  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+  if (!snap.exists()) return null;
+  const data = { id: snap.id, ...snap.data() };
+  if (!data.hasSplitScorecard) return data;
+  const stored = await getStoredScorecard(matchId).catch(() => null);
+  return stored?.fullScorecardData ? { ...data, ...stored.fullScorecardData } : data;
 }
 
 export async function saveCompletedMatch(matchId, payload) {
   const clean = stripUndefined(payload);
+  const { summary } = splitMatchPayload(clean);
   await Promise.all([
-    setDoc(doc(firestoreDb, "matches", matchId), { ...clean, matchId, status: "completed", matchFinished: true, updatedAt: serverTimestamp(), completedAt: serverTimestamp() }, { merge: true }),
-    setDoc(doc(firestoreDb, "completedMatches", matchId), { ...clean, matchId, status: "completed", matchFinished: true, updatedAt: serverTimestamp(), completedAt: serverTimestamp() }, { merge: true }),
-    setDoc(doc(firestoreDb, "scorecards", matchId), { matchId, fullScorecardData: clean, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true })
+    setDoc(doc(firestoreDb, "matches", matchId), { ...summary, matchId, status: "completed", matchFinished: true, updatedAt: serverTimestamp(), completedAt: serverTimestamp() }, { merge: true }),
+    setDoc(doc(firestoreDb, "completedMatches", matchId), { ...summary, matchId, status: "completed", matchFinished: true, updatedAt: serverTimestamp(), completedAt: serverTimestamp() }, { merge: true }),
+    saveScorecardParts(matchId, { ...clean, status: "completed", matchFinished: true })
   ]);
 }
 
@@ -180,7 +198,23 @@ export async function deleteCompletedMatch(matchId) {
 
 export async function getStoredScorecard(matchId) {
   const snap = await getDoc(doc(firestoreDb, "scorecards", matchId));
-  return snap.exists() ? { matchId: snap.id, ...snap.data() } : null;
+  if (!snap.exists()) return null;
+  const main = { matchId: snap.id, ...snap.data() };
+  const inningsSnap = await getDocs(collection(firestoreDb, "scorecards", matchId, "innings"));
+  const inningsDetails = {};
+  inningsSnap.docs.forEach(d => {
+    const row = d.data();
+    const key = row.key || row.team || d.id;
+    inningsDetails[key] = row;
+  });
+  const base = main.fullScorecardData || main;
+  const fullScorecardData = {
+    ...base,
+    inningsDetails: Object.keys(inningsDetails).length ? inningsDetails : (base.inningsDetails || {}),
+    completedInnings: Object.keys(inningsDetails).length ? Object.fromEntries(Object.entries(inningsDetails).map(([team, inn]) => [team, inn.battingScorecard || []])) : (base.completedInnings || {}),
+    completedBowling: Object.keys(inningsDetails).length ? Object.fromEntries(Object.entries(inningsDetails).map(([team, inn]) => [team, inn.bowlerStats || {}])) : (base.completedBowling || {})
+  };
+  return { ...main, fullScorecardData };
 }
 
 export function listenCompletedMatches(callback, onError) {
@@ -201,7 +235,14 @@ export function listenScheduledMatches(callback, onError) {
 
 export async function getCompletedMatch(matchId) {
   const snap = await getDoc(doc(firestoreDb, "completedMatches", matchId));
-  if (snap.exists()) return { matchId: snap.id, ...snap.data() };
+  if (snap.exists()) {
+    const data = { matchId: snap.id, ...snap.data() };
+    if (data.hasSplitScorecard) {
+      const stored = await getStoredScorecard(matchId).catch(() => null);
+      return stored?.fullScorecardData ? { ...data, ...stored.fullScorecardData } : data;
+    }
+    return data;
+  }
   const m = await getMatch(matchId);
   return m && m.status === "completed" ? m : null;
 }
@@ -242,6 +283,53 @@ export async function saveSavedLink(link) {
   const id = link.linkId || link.matchId || makeId("link");
   await setDoc(doc(firestoreDb, "savedLinks", id), { ...link, linkId: id, updatedAt: serverTimestamp(), createdAt: link.createdAt || serverTimestamp() }, { merge: true });
   return id;
+}
+
+const SCORECARD_HEAVY_FIELDS = [
+  "inningsDetails",
+  "completedInnings",
+  "completedBowling",
+  "commentary",
+  "overSummary",
+  "recentBalls",
+  "fallOfWickets",
+  "battingScorecard",
+  "bowlerStats",
+  "undoStack"
+];
+
+function splitMatchPayload(payload = {}) {
+  const summary = { ...payload };
+  SCORECARD_HEAVY_FIELDS.forEach(field => delete summary[field]);
+  summary.hasSplitScorecard = true;
+  summary.scorecardVersion = 2;
+  summary.inningsTeams = Object.keys(payload.inningsDetails || {});
+  return { summary };
+}
+
+async function saveScorecardParts(matchId, payload = {}) {
+  const { summary } = splitMatchPayload(payload);
+  const inningsDetails = payload.inningsDetails || {};
+  const scorecardBase = {
+    ...summary,
+    matchId,
+    fullScorecardData: summary,
+    hasSplitScorecard: true,
+    scorecardVersion: 2,
+    updatedAt: serverTimestamp(),
+    createdAt: payload.createdAt || serverTimestamp()
+  };
+  const writes = [setDoc(doc(firestoreDb, "scorecards", matchId), scorecardBase, { merge: true })];
+  Object.entries(inningsDetails).forEach(([team, detail]) => {
+    const inningId = safeId(team || detail?.team || "innings");
+    writes.push(setDoc(doc(firestoreDb, "scorecards", matchId, "innings", inningId), {
+      ...stripUndefined(detail || {}),
+      key: team,
+      team: detail?.team || team,
+      updatedAt: serverTimestamp()
+    }, { merge: true }));
+  });
+  await Promise.all(writes);
 }
 
 export function makeId(prefix = "id") {

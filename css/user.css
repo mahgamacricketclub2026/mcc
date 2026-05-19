@@ -95,9 +95,12 @@ body.live-glow .center.live:before{content:"";width:7px;height:7px;border-radius
  .commentary-tag{min-width:52px;text-align:center;border-radius:999px;padding:4px 7px;font-size:10px;font-weight:900;background:#eef2f7;color:#475569}
  .commentary-tag.four{background:#fff7ed;color:#c2410c}
  .commentary-tag.six{background:#ecfdf3;color:#15803d}
- .commentary-tag.wicket{background:#fef2f2;color:#b91c1c}
- .commentary-tag.over{background:#eff6ff;color:#1d4ed8}
- .players-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.commentary-tag.wicket{background:#fef2f2;color:#b91c1c}
+.commentary-tag.over{background:#eff6ff;color:#1d4ed8}
+.commentary-innings-separator{display:flex;justify-content:center;margin:10px 0}
+.commentary-innings-separator span{display:inline-flex;align-items:center;gap:7px;background:#10243d;color:#fff;border-radius:999px;padding:5px 13px;font-size:11px;font-weight:900;text-transform:uppercase}
+.commentary-innings-separator span:before,.commentary-innings-separator span:after{content:"";width:3px;height:15px;border-radius:999px;background:#dc2626}
+.players-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
  .player{border:1px solid #e7edf4;border-radius:10px;padding:10px;text-align:center;background:#fff}
  .player:hover,.team-profile-card:hover{border-color:#18864b;box-shadow:0 10px 26px rgba(15,118,110,.12)}
  .avatar{width:46px;height:46px;border-radius:50%;background:#e6f4f1;color:#0f766e;display:flex;align-items:center;justify-content:center;margin:0 auto 7px;font-weight:900;overflow:hidden}
@@ -204,6 +207,18 @@ body.live-glow .center.live:before{content:"";width:7px;height:7px;border-radius
 @media(max-width:520px){
   .content{padding:8px}
   .card{padding:10px;overflow:hidden}
+  .graph-card{overflow:visible}
+  .graph-card .section-head{flex-direction:row;align-items:center}
+  .run-graph{min-height:210px;overflow:visible;border-radius:10px}
+  .run-graph .graph-wrap{min-width:0;width:100%}
+  .run-graph svg{width:100%;max-width:100%}
+  .run-graph .graph-label{font-size:10px}
+  .run-graph .graph-key{font-size:10px}
+  .graph-tooltip{position:fixed;left:50%!important;right:auto!important;bottom:14px!important;top:auto!important;transform:translateX(-50%);min-width:150px;max-width:calc(100vw - 28px);padding:7px 9px}
+  .graph-tooltip b{font-size:13px;margin-bottom:4px}
+  .graph-tip-row{margin-top:4px}
+  .graph-tip-row span{font-size:12px}
+  .graph-tip-row strong{font-size:13px}
   .card h3{font-size:18px;margin-bottom:10px}
   .section-head{align-items:flex-start;flex-direction:column}
   .filter-row{width:100%}

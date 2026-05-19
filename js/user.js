@@ -261,15 +261,22 @@ window.app = {
 
   currentBattingRows(m) { const rows = [...(m.battingScorecard || [])]; [m.bat1, m.bat2].forEach(b => { if (b?.name && b.name !== "-" && !rows.some(x => (b.playerId && x.playerId === b.playerId) || (!b.playerId && x.name === b.name))) rows.push(b); }); return rows; },
   renderCommentary(m) {
-    let rows = [...(m.commentary || [])];
-    if (m.matchFinished || rows.length === 0) {
-      rows = [];
-      Object.values(m.inningsDetails || {}).forEach(inn => rows.push(...(inn.commentary || [])));
-    }
-    $("commentaryList").innerHTML = rows.length ? rows.map(c => {
+    const htmlRows = [];
+    const addRows = (rows = []) => rows.forEach(c => {
       const tag = this.commentaryTag(c);
-      return `<div class="comment commentary-item">${tag}<div><b>${this.safe(c.ball)}</b> ${this.safe(c.text)}</div></div>`;
-    }).join("") : "<span class='muted'>No commentary</span>";
+      htmlRows.push(`<div class="comment commentary-item">${tag}<div><b>${this.safe(c.ball)}</b> ${this.safe(c.text)}</div></div>`);
+    });
+    const innings = this.orderedInningsDetails(m);
+    if (Number(m.inningNumber || 1) > 1 && innings.length) {
+      addRows(m.matchFinished ? (innings[1]?.commentary || []) : (m.commentary || []));
+      htmlRows.push(`<div class="commentary-innings-separator"><span>2nd Innings</span></div>`);
+      addRows(innings[0]?.commentary || []);
+    } else {
+      let rows = [...(m.commentary || [])];
+      if (m.matchFinished || rows.length === 0) rows = innings.flatMap(inn => inn.commentary || []);
+      addRows(rows);
+    }
+    $("commentaryList").innerHTML = htmlRows.length ? htmlRows.join("") : "<span class='muted'>No commentary</span>";
   },
   commentaryTag(c = {}) {
     const text = String(c.text || "");
@@ -355,7 +362,10 @@ window.app = {
     return Number.isFinite(n) ? n : 0;
   },
   runWormSvg(series = [], totalOvers = 0) {
-    const width = 720, height = 330, pad = 52;
+    const mobile = window.matchMedia?.("(max-width: 520px)").matches;
+    const width = mobile ? 360 : 720;
+    const height = mobile ? 238 : 330;
+    const pad = mobile ? 34 : 52;
     const all = series.flatMap(s => s.points);
     const maxRunsRaw = Math.max(20, ...all.map(p => Number(p.runs || 0)));
     const maxRuns = Math.ceil(maxRunsRaw / 50) * 50;
@@ -368,12 +378,18 @@ window.app = {
       const gy = y(maxRuns * v);
       return `<line x1="${pad}" y1="${gy}" x2="${width-pad}" y2="${gy}" class="graph-grid"/><text x="${pad-38}" y="${gy+4}" class="graph-label">${Math.round(maxRuns*v)}</text>`;
     }).join("");
-    const tickCount = Math.min(maxOver, 10);
+    const tickCount = Math.min(maxOver, mobile ? 5 : 10);
     const overTicks = Array.from({ length: tickCount + 1 }, (_, i) => Math.round((maxOver / tickCount) * i)).filter((v, i, arr) => i === 0 || v !== arr[i - 1]).map(over => `<line x1="${x(over)}" y1="${height-pad}" x2="${x(over)}" y2="${height-pad+5}" class="graph-axis"/><text x="${x(over)-4}" y="${height-18}" class="graph-label">${over}</text>`).join("");
+    const legendSlotWidth = mobile ? 118 : 190;
+    const legendName = (name) => {
+      const raw = String(name || "");
+      const maxChars = Math.max(5, Math.floor((legendSlotWidth - 28) / (mobile ? 5.7 : 7.1)));
+      return raw.length > maxChars ? `${raw.slice(0, Math.max(2, maxChars - 3))}...` : raw;
+    };
     const legend = series.map((s, i) => {
-      const lx = pad + i * 148;
+      const lx = pad + i * legendSlotWidth;
       const marker = i === 1 ? `<rect x="${lx}" y="20" width="14" height="14" rx="1" fill="${colors[i%colors.length]}"/>` : `<circle cx="${lx+7}" cy="27" r="7" fill="${colors[i%colors.length]}"/>`;
-      return `${marker}<text x="${lx+24}" y="31" class="graph-key" fill="#4b5563">${this.safe(s.name)}</text>`;
+      return `${marker}<text x="${lx+22}" y="31" class="graph-key" fill="#4b5563">${this.safe(legendName(s.name))}</text>`;
     }).join("");
     const lines = series.map((s, i) => {
       const d = s.points.map((p, idx) => `${idx ? "L" : "M"}${x(p.over).toFixed(1)},${y(p.runs).toFixed(1)}`).join(" ");
@@ -426,6 +442,11 @@ window.app = {
       }
       tip.innerHTML = `<b>${overTextFromValue(tooltipOver.over)} overs</b>${rows.map(row => `<div class="graph-tip-row"><span><i class="${row.shape}" style="background:${row.color}"></i>${this.safe(row.name)}</span><strong>${row.runs}/${row.wkts || 0}</strong></div>`).join("")}`;
       tip.classList.remove("hidden");
+      if (window.matchMedia?.("(max-width: 520px)").matches) {
+        tip.style.left = "";
+        tip.style.top = "";
+        return;
+      }
       const tipWidth = tip.offsetWidth || 190;
       const tipHeight = tip.offsetHeight || 112;
       const pointerX = ev.clientX - rect.left;
@@ -461,12 +482,16 @@ window.app = {
       ? `Scheduled - ${this.safe([s.matchDate, this.formatTime(s.liveControl?.displayTime || s.matchTime)].filter(Boolean).join(" "))}`
       : `Current - ${s.runs}/${s.wkts} (${overText(s.balls)})`;
     const current = s.matchId ? `<div class="match-card-mini"><b>${this.safe(s.matchTitle)}</b><br><small>${currentMeta}</small></div>` : "";
+    const schedule = Array.isArray(s.league?.schedule) ? s.league.schedule : [];
+    const upcoming = schedule.filter(x => !this.fixtureDone(x)).slice(0, 8).map(x => `<div class="match-card-mini fixture-card"><div class="fixture-top"><span>${this.safe(this.fixtureDateTime(x))}</span><b>${this.safe(x.status || "upcoming")}</b></div><strong>${this.safe(x.teamA?.name || x.teamA || "TBA")} vs ${this.safe(x.teamB?.name || x.teamB || "TBA")}</strong><small>${this.safe([x.stage || "League", x.round, x.venue].filter(Boolean).join(" · "))}</small></div>`).join("");
     const history = this.completed.map(m => `<div class="match-card-mini" onclick="location.href='user.html?match=${m.matchId}'"><b>${this.safe(m.matchTitle||m.title||'Match')}</b><br><small>${this.safe(m.winnerText||'')}<br>${this.safe(m.firstInnings||'')} ${m.secondInnings?' | '+this.safe(m.secondInnings):''}</small></div>`).join("");
-    $("matchesList").innerHTML = current + history || "<span class='muted'>No matches</span>";
+    $("matchesList").innerHTML = current + (upcoming ? `<h3 style="margin:14px 0 8px">Upcoming</h3>${upcoming}` : "") + (history ? `<h3 style="margin:14px 0 8px">Completed</h3>${history}` : "") || "<span class='muted'>No matches</span>";
   },
-  renderLeague(m) { const l=m.league||{}; const schedule=Array.isArray(l.schedule)?l.schedule:[]; const teams=Array.isArray(l.teams)?l.teams:[]; $("leagueTitle").textContent=l.name||"League";$("leagueTeams").textContent=teams.length;$("leagueMatches").textContent=schedule.length;$("leagueDone").textContent=schedule.filter(x=>x.status==='completed'||x.status==='done').length;$("leaguePending").textContent=schedule.filter(x=>!(x.status==='completed'||x.status==='done')).length; const filtered=this.filterSchedule(schedule); $("leagueSchedule").innerHTML=filtered.map(x=>{ const result=x.result||x.winnerText||""; const score=[x.firstInnings,x.secondInnings].filter(Boolean).join(" | "); const when=[x.matchDate,x.matchTime].filter(Boolean).join(" "); const meta=[x.stage||'League',x.round,x.status||'pending'].filter(Boolean).join(" · "); return `<div class="match-card-mini fixture-card"><div class="fixture-top">${when?`<span>${this.safe(when)}</span>`:`<span>Time TBA</span>`}<b>${this.safe(x.status||'pending')}</b></div><strong>${this.safe(x.teamA?.name||x.teamA)} vs ${this.safe(x.teamB?.name||x.teamB)}</strong><small>${this.safe(meta)}</small>${x.venue?`<small>${this.safe(x.venue)}</small>`:""}${result?`<b class="fixture-result">${this.safe(result)}</b>`:""}${score?`<small>${this.safe(score)}</small>`:""}</div>`; }).join("")||"<span class='muted'>No schedule</span>"; },
+  renderLeague(m) { const l=m.league||{}; const schedule=Array.isArray(l.schedule)?l.schedule:[]; const teams=Array.isArray(l.teams)?l.teams:[]; $("leagueTitle").textContent=l.name||"League";$("leagueTeams").textContent=teams.length;$("leagueMatches").textContent=schedule.length;$("leagueDone").textContent=schedule.filter(x=>this.fixtureDone(x)).length;$("leaguePending").textContent=schedule.filter(x=>!this.fixtureDone(x)).length; const filtered=this.filterSchedule(schedule); const card=x=>{ const result=x.result||x.winnerText||""; const score=[x.firstInnings,x.secondInnings].filter(Boolean).join(" | "); const meta=[x.stage||'League',x.round,x.status||'pending'].filter(Boolean).join(" · "); return `<div class="match-card-mini fixture-card"><div class="fixture-top"><span>${this.safe(this.fixtureDateTime(x))}</span><b>${this.safe(x.status||'pending')}</b></div><strong>${this.safe(x.teamA?.name||x.teamA||"TBA")} vs ${this.safe(x.teamB?.name||x.teamB||"TBA")}</strong><small>${this.safe(meta)}</small>${x.venue?`<small>${this.safe(x.venue)}</small>`:""}${result?`<b class="fixture-result">${this.safe(result)}</b>`:""}${score?`<small>${this.safe(score)}</small>`:""}</div>`; }; if(this.scheduleFilter==="all"){ const upcoming=filtered.filter(x=>!this.fixtureDone(x)); const completed=filtered.filter(x=>this.fixtureDone(x)); $("leagueSchedule").innerHTML=(upcoming.length?`<h3 style="margin:12px 0 8px">Upcoming</h3>${upcoming.map(card).join("")}`:"")+(completed.length?`<h3 style="margin:14px 0 8px">Completed</h3>${completed.map(card).join("")}`:"")||"<span class='muted'>No schedule</span>"; } else $("leagueSchedule").innerHTML=filtered.map(card).join("")||"<span class='muted'>No schedule</span>"; },
+  fixtureDone(x) { return ["completed", "done", "no-result", "cancelled"].includes(String(x.status || "").toLowerCase()); },
+  fixtureDateTime(x) { const date = x.matchDate || ""; const time = this.formatTime(x.matchTime || ""); return [date, time].filter(Boolean).join(" ") || "Time TBA"; },
   filterSchedule(schedule) {
-    const done = x => ["completed", "done", "no-result", "cancelled"].includes(String(x.status || "").toLowerCase());
+    const done = x => this.fixtureDone(x);
     if (this.scheduleFilter === "upcoming") return schedule.filter(x => !done(x));
     if (this.scheduleFilter === "completed") return schedule.filter(done);
     if (this.scheduleFilter === "playoffs") return schedule.filter(x => /qualifier|eliminator|final|semi/i.test(`${x.stage || ""} ${x.round || ""}`));
@@ -736,7 +761,7 @@ window.app = {
   },
   safe(v){return String(v??'').replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));},
   ballClass(x){const t=String(x);return /^W(?!d)/i.test(t)?'wicket':(t==='4'?'four':(t==='6'?'six':''));},
-  nrrValue(p){const rf=p?.BF?Number(p.RF||0)/(Number(p.BF||0)/6):0,ra=p?.BA?Number(p.RA||0)/(Number(p.BA||0)/6):0;return rf-ra;},
+  nrrValue(p){const rf=p?.BF?Number(p.RF||0)/(Number(p.BF||0)/6):0,ra=p?.BA?Number(p.RA||0)/(Number(p.BA||0)/6):0;return rf-ra+Number(p?.manualNRR||0);},
   nrr(p){const v=this.nrrValue(p);return `${v>=0?"+":""}${v.toFixed(3)}`;}
 };
 
