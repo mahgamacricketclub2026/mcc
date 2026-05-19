@@ -21,14 +21,32 @@
     <header class="topbar">
       <div class="status-pill" id="topStatus">NO LIVE</div>
       <div><h1 id="topTitle">Cricket Admin</h1><p id="topSub">Hybrid Firebase scoring panel</p></div>
-      <div class="top-actions"><span id="syncStatus">Ready</span><button id="logoutBtn" class="btn light">Logout</button></div>
+      <div class="top-actions">
+        <span id="syncStatus">Ready</span>
+        <div class="profile-menu-wrap">
+          <button id="profileBtn" class="profile-btn" type="button" aria-haspopup="true" aria-expanded="false">
+            <span id="profileAvatar">A</span>
+            <b id="profileName">Admin</b>
+          </button>
+          <div id="profilePopup" class="profile-popup hidden">
+            <div class="profile-head">
+              <span id="profilePopupAvatar">A</span>
+              <div><b id="profilePopupName">Admin</b><small id="profilePopupEmail">-</small></div>
+            </div>
+            <div class="profile-row"><span>Status</span><b>Admin</b></div>
+            <div class="profile-row"><span>UID</span><code id="profileUid">-</code></div>
+            <div class="profile-actions"><button id="addAdminBtn" class="btn">Add Admin</button><button id="logoutBtn" class="btn danger">Logout</button></div>
+          </div>
+        </div>
+      </div>
     </header>
 
     <nav class="tabs">
       <button class="tab" data-page="setup">Match Setup</button>
       <button class="tab active" data-page="live">Live Match Control</button>
       <button class="tab" data-page="league">Create League</button>
-      <button class="tab" data-page="teams">Teams</button>
+      <button class="tab" data-page="teams">Manage Players</button>
+      <button class="tab" data-page="profileDetails">Profile Details</button>
       <button class="tab" data-page="health">Data Health</button>
       <button class="tab" data-page="history">History</button>
     </nav>
@@ -72,7 +90,7 @@
           <div class="timed-control"><input id="controlTime" type="time"><button id="showTimeBtn" class="btn">Show Time</button></div>
           <div class="extras"><label><input id="wide" type="checkbox"> Wide</label><label><input id="noball" type="checkbox"> No Ball</label><label><input id="bye" type="checkbox"> Bye</label><label><input id="legbye" type="checkbox"> Leg Bye</label><label><input id="wicket" type="checkbox"> Wicket</label></div>
           <div class="run-grid"><button>0</button><button>1</button><button>2</button><button>3</button><button>4</button><button>5</button><button>6</button><button data-custom="1">+</button></div>
-          <div class="actions"><button id="undoBtn" class="btn danger">Undo</button><button id="clearTypesBtn" class="btn light">Clear Type</button><button id="swapBtn" class="btn">Swap Batsman</button><button id="retireBtn" class="btn">Retire</button><button id="changeBatsmanBtn" class="btn">Change Batsman</button><button id="changeBowlerBtn" class="btn">Change Bowler</button><button id="switchInningsBtn" class="btn warn">Switch Innings</button><button id="startSuperOverBtn" class="btn warn hidden">Start Super Over</button><button id="manualSaveBtn" class="btn primary">Save Score</button><button id="clearBackupBtn" class="btn light">Clear Backup</button><button id="completeBtn" class="btn danger">Complete Match</button></div>
+          <div class="actions"><button id="undoBtn" class="btn danger">Undo</button><button id="clearTypesBtn" class="btn light">Clear Type</button><button id="swapBtn" class="btn">Swap Batsman</button><button id="retireBtn" class="btn">Retire</button><button id="changeBatsmanBtn" class="btn">Change Batsman</button><button id="changeBowlerBtn" class="btn">Change Bowler</button><button id="switchInningsBtn" class="btn warn">Switch Innings</button><button id="startSuperOverBtn" class="btn warn hidden">Start Super Over</button><button id="manualSaveBtn" class="btn primary">Save Score</button><button id="clearBackupBtn" class="btn light">Clear Backup</button><button id="clearStorageBtn" class="btn warn">Clear Storage</button><button id="completeBtn" class="btn danger">Complete Match</button></div>
           <h2>This Over</h2><div id="thisOver" class="ball-strip"></div>
           <h2>Recent Balls</h2><div id="recentBalls" class="list"></div><div id="manualSaveNote" class="save-note">Tip: हर over के बाद Save Score दबाएँ.</div>
         </div>
@@ -94,8 +112,32 @@
       </section>
 
       <section id="teams" class="page teams-grid">
-        <div class="panel"><div class="section-head"><div><h2>Teams</h2><p>Create teams and manage profiles.</p></div><button id="addTeamBtn" class="btn primary">Add Team</button></div><div id="teamList" class="list big"></div></div>
-        <div><div class="panel"><div class="section-head"><div><h2>Players</h2><p id="selectedTeamName">Select team</p></div><button id="addPlayerBtn" class="btn primary">Add Player</button></div><div id="playerList" class="player-grid"></div></div></div>
+        <div class="panel">
+          <div class="section-head"><div><h2>Teams</h2><p>Create teams and select one to manage players.</p></div><button id="addTeamBtn" class="btn primary">Add Team</button></div>
+          <input id="teamProfileSearch" placeholder="Search team or short name">
+          <div id="teamList" class="list big"></div>
+        </div>
+        <div class="panel">
+          <div class="section-head"><div><h2>Players</h2><p id="selectedTeamName">Select team</p></div><button id="addPlayerBtn" class="btn primary">Add Player</button></div>
+          <input id="playerProfileSearch" placeholder="Search player, role, jersey">
+          <div id="playerList" class="player-grid"></div>
+        </div>
+      </section>
+
+      <section id="profileDetails" class="page profile-details-grid">
+        <div class="panel">
+          <div class="section-head"><div><h2>Team Details</h2><p>User side jaisi read-only team profiles.</p></div></div>
+          <input id="detailTeamSearch" placeholder="Search team">
+          <div id="detailTeamList" class="list big"></div>
+        </div>
+        <div class="panel">
+          <div class="section-head"><div><h2>Player Details</h2><p id="detailTeamTitle">Select team</p></div></div>
+          <input id="detailPlayerSearch" placeholder="Search player">
+          <div id="detailPlayerList" class="player-grid"></div>
+        </div>
+        <div class="panel profile-detail-main">
+          <div id="detailProfileView" class="profile-empty">Select a team or player to view details.</div>
+        </div>
       </section>
 
       <section id="health" class="page">
@@ -119,6 +161,8 @@
   <div id="wicketModal" class="modal"><div class="modal-card"><h2>Wicket Detail</h2><div class="wicket-types"><button data-type="Bowled" class="active">Bowled</button><button data-type="LBW">LBW</button><button data-type="Caught">Caught</button><button data-type="Run Out">Run Out</button><button data-type="Stumping">Stumping</button><button data-type="Hit Wicket">Hit Wicket</button><button data-type="Retired Out">Retired Out</button></div><label id="outBatsmanLabel">Out Batsman</label><select id="outBatsmanSelect"></select><label>Fielder / Keeper / Thrower</label><input id="wicketHelper" placeholder="Optional"><label>Dismissal Note</label><input id="dismissalNote" placeholder="Optional"><div class="actions"><button id="wicketCancel" class="btn light">Cancel</button><button id="wicketDone" class="btn primary">Done</button></div></div></div>
 
   <div id="mvpModal" class="modal"><div class="modal-card"><h2>Select Man of the Match</h2><div id="mvpPlayerList" class="picker-list"></div><div class="actions"><button id="mvpCancel" class="btn light">Cancel</button></div></div></div>
+
+  <div id="adminRegisterModal" class="modal"><div class="modal-card"><h2>Add Admin</h2><label>Email</label><input id="newAdminEmail" type="email" placeholder="admin@example.com"><label>Password</label><input id="newAdminPassword" type="password" placeholder="Minimum 6 characters"><div class="actions"><button id="adminRegisterCancel" class="btn light">Cancel</button><button id="adminRegisterSave" class="btn primary">Register Admin</button></div></div></div>
 
   <div id="teamProfileModal" class="modal"><div class="modal-card"><h2>Team Profile</h2><div id="teamProfileBody" class="admin-team-profile"></div><div class="actions"><button id="teamProfileEdit" class="btn primary">Edit Profile</button><button id="teamProfileClose" class="btn light">Close</button></div></div></div>
 

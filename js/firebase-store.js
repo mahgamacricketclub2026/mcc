@@ -1,6 +1,7 @@
 import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
 import {
   getAuth,
+  createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut,
   onAuthStateChanged
@@ -22,7 +23,7 @@ import {
   where,
   writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-import { firebaseConfig } from "../firebase/firebase-config.js";
+import { firebaseConfig } from "../firebase/firebase-config.js?v=20260519a";
 
 export const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
@@ -45,6 +46,42 @@ export async function isAdmin(uid) {
   const snap = await getDoc(doc(firestoreDb, "admins", uid));
   const data = snap.exists() ? snap.data() : null;
   return !!(data && data.active === true && data.role === "admin");
+}
+
+export async function saveAdminUser(uidOrEmail) {
+  const value = String(uidOrEmail || "").trim();
+  if (!value) throw new Error("Admin UID or email is required.");
+  const isEmail = value.includes("@");
+  const id = value;
+  await setDoc(doc(firestoreDb, "admins", id), {
+    uid: id,
+    email: isEmail ? value : "",
+    role: "admin",
+    active: true,
+    updatedAt: serverTimestamp(),
+    createdAt: serverTimestamp()
+  }, { merge: true });
+  return id;
+}
+
+export async function registerAdminUser(email, password) {
+  const cleanEmail = String(email || "").trim();
+  const cleanPassword = String(password || "");
+  if (!cleanEmail || !cleanEmail.includes("@")) throw new Error("Valid email is required.");
+  if (cleanPassword.length < 6) throw new Error("Password must be at least 6 characters.");
+  const secondaryApp = getApps().find(a => a.name === "admin-registration") || initializeApp(firebaseConfig, "admin-registration");
+  const secondaryAuth = getAuth(secondaryApp);
+  const cred = await createUserWithEmailAndPassword(secondaryAuth, cleanEmail, cleanPassword);
+  await setDoc(doc(firestoreDb, "admins", cred.user.uid), {
+    uid: cred.user.uid,
+    email: cleanEmail,
+    role: "admin",
+    active: true,
+    updatedAt: serverTimestamp(),
+    createdAt: serverTimestamp()
+  }, { merge: true });
+  await signOut(secondaryAuth).catch(() => {});
+  return cred.user.uid;
 }
 
 export async function saveTeam(team) {
@@ -146,6 +183,8 @@ export async function saveMatch(matchId, payload) {
   ]);
 }
 
+export const saveMatchStore = saveMatch;
+
 export function listenMatch(matchId, callback, onError) {
   if (!matchId) return () => {};
   return onSnapshot(doc(firestoreDb, "matches", matchId), async (snap) => {
@@ -178,6 +217,8 @@ export async function saveCompletedMatch(matchId, payload) {
   ]);
 }
 
+export const saveCompletedMatchEverywhere = saveCompletedMatch;
+
 export async function updateCompletedMatchMvp(matchId, mvp) {
   const update = { playerOfMatch: mvp, mvp, updatedAt: serverTimestamp() };
   await Promise.all([
@@ -188,8 +229,10 @@ export async function updateCompletedMatchMvp(matchId, mvp) {
 
 export async function deleteCompletedMatch(matchId) {
   const statsSnap = await getDocs(query(collection(firestoreDb, "playerMatchStats"), where("matchId", "==", matchId)));
+  const inningsSnap = await getDocs(collection(firestoreDb, "scorecards", matchId, "innings"));
   const batch = writeBatch(firestoreDb);
   statsSnap.docs.forEach(statDoc => batch.delete(statDoc.ref));
+  inningsSnap.docs.forEach(inningDoc => batch.delete(inningDoc.ref));
   batch.delete(doc(firestoreDb, "matches", matchId));
   batch.delete(doc(firestoreDb, "completedMatches", matchId));
   batch.delete(doc(firestoreDb, "scorecards", matchId));

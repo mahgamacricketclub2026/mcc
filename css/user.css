@@ -65,6 +65,9 @@ body.live-glow .center.live:before{content:"";width:7px;height:7px;border-radius
 .quick-grid b{display:block;margin-top:5px;font-size:18px}
 .graph-card{background:#fff;border-color:#dfe5eb}
 .graph-summary{color:#64748b;font-size:12px;font-weight:800;text-transform:uppercase}
+.graph-tabs{display:flex;gap:4px;border:1px solid #dbe5ef;border-radius:999px;padding:3px;background:#f8fafc}
+.graph-tabs button{border:0;border-radius:999px;background:transparent;color:#475569;padding:6px 10px;font-size:11px;font-weight:900;white-space:nowrap}
+.graph-tabs button.active{background:#18864b;color:#fff}
 .run-graph{min-height:260px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;overflow:hidden;position:relative}
 .graph-wrap{position:relative}
 .run-graph svg{display:block;width:100%;height:auto}
@@ -208,12 +211,20 @@ body.live-glow .center.live:before{content:"";width:7px;height:7px;border-radius
   .content{padding:8px}
   .card{padding:10px;overflow:hidden}
   .graph-card{overflow:visible}
-  .graph-card .section-head{flex-direction:row;align-items:center}
-  .run-graph{min-height:210px;overflow:visible;border-radius:10px}
+  .graph-card .section-head{flex-direction:row;align-items:center;flex-wrap:wrap;gap:8px}
+  .graph-card .section-head h3{font-size:16px;margin-bottom:0}
+  .graph-tabs{order:3;width:100%;display:grid;grid-template-columns:1fr 1fr;border-radius:10px}
+  .graph-tabs button{padding:8px 8px;font-size:11px}
+  .graph-summary{font-size:10px}
+  .run-graph{min-height:224px;overflow:visible;border-radius:10px;background:#fbfdff}
   .run-graph .graph-wrap{min-width:0;width:100%}
   .run-graph svg{width:100%;max-width:100%}
-  .run-graph .graph-label{font-size:10px}
-  .run-graph .graph-key{font-size:10px}
+  .run-graph .graph-label{font-size:9px}
+  .run-graph .graph-key{font-size:9px}
+  .graph-grid{stroke:#eef2f7}
+  .graph-axis{stroke:#94a3b8;stroke-width:1.1}
+  .graph-guide{stroke:#334155;stroke-width:1.15}
+  .graph-hover-dot{r:4}
   .graph-tooltip{position:fixed;left:50%!important;right:auto!important;bottom:14px!important;top:auto!important;transform:translateX(-50%);min-width:150px;max-width:calc(100vw - 28px);padding:7px 9px}
   .graph-tooltip b{font-size:13px;margin-bottom:4px}
   .graph-tip-row{margin-top:4px}
@@ -228,11 +239,34 @@ body.live-glow .center.live:before{content:"";width:7px;height:7px;border-radius
   .card th:first-child,.card td:first-child{width:44%;text-align:left}
   .card th:nth-child(n+2),.card td:nth-child(n+2){text-align:center}
   .card td[colspan]{width:100%!important;max-width:100%!important;text-align:left;white-space:normal;overflow:visible;text-overflow:clip}
+  .modal{align-items:flex-end;padding:8px}
+  .modal-card{width:100%;max-height:92vh;border-radius:16px 16px 0 0;padding:14px 12px}
+  .modal-card button#modalClose{right:10px;top:10px;width:32px;height:32px;z-index:2}
+  .modal-card .profile-hero{display:grid;grid-template-columns:56px minmax(0,1fr);gap:10px;align-items:center;padding:0 38px 12px 0;margin-bottom:12px}
+  .modal-card .avatar.xl,.modal-card .logo.xl{width:56px;height:56px;font-size:18px}
+  .modal-card .profile-hero h2{font-size:18px;line-height:1.15;margin-bottom:3px;overflow-wrap:anywhere}
+  .modal-card .profile-hero p,.modal-card>p{font-size:12px;line-height:1.35;overflow-wrap:anywhere}
+  .modal-card h3{font-size:15px;margin:12px 0 7px!important}
+  .modal-card .quick-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}
+  .modal-card .quick-grid>div{min-height:54px;padding:7px 3px;text-align:center;border-radius:8px}
+  .modal-card .quick-grid span{font-size:8px;line-height:1.05;word-break:normal}
+  .modal-card .quick-grid b{font-size:14px;line-height:1.05;overflow-wrap:anywhere}
+  .modal-card .profile-list{gap:6px}
+  .modal-card .profile-list button{max-width:100%;padding:7px 9px;font-size:12px;overflow-wrap:anywhere}
 }
 
 @media(max-width:380px){
   .card th,.card td{padding:6px 3px;font-size:9px}
   .card th:first-child,.card td:first-child{width:40%}
+  .modal{padding:6px}
+  .modal-card{padding:12px 10px}
+  .modal-card .profile-hero{grid-template-columns:50px minmax(0,1fr);gap:8px;padding-right:34px}
+  .modal-card .avatar.xl,.modal-card .logo.xl{width:50px;height:50px;font-size:16px}
+  .modal-card .profile-hero h2{font-size:16px}
+  .modal-card .quick-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}
+  .modal-card .quick-grid>div{min-height:50px;padding:6px 2px}
+  .modal-card .quick-grid span{font-size:7px}
+  .modal-card .quick-grid b{font-size:12px}
 }
 
 .mini-over{display:flex;align-items:center;justify-content:flex-end;gap:5px;margin-top:7px;flex-wrap:wrap}

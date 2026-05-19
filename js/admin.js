@@ -1,13 +1,13 @@
-﻿import { cloudinaryConfig } from "../firebase/firebase-config.js";
+import { cloudinaryConfig } from "../firebase/firebase-config.js?v=20260519a";
 import {
   loginAdmin, logoutAdmin, watchAuth, isAdmin,
   saveTeam, deleteTeam, listenTeams, savePlayer, deletePlayer, listenPlayers,
   getTeamsWithPlayers, saveLeague, deleteLeague, listenLeagues,
-  saveMatch, saveCompletedMatch, listenCompletedMatches, listenScheduledMatches, updateCompletedMatchMvp, deleteCompletedMatch, getStoredScorecard, savePlayerMatchStats, saveSavedLink, savePublicSettings, makeId, safeId
-} from "./firebase-store.js";
-import { writeLiveMatch } from "./firebase-live.js";
-import { livePayload, storePayload, normalizeState, normalizeBatter, overText, calcSR, calcER, clone } from "./live-sync.js";
-import { buildBallCommentary, buildSpecialCommentary, buildOverCommentary, chaseLine as buildChaseLine } from "./commentary-engine.js";
+  saveMatch, saveCompletedMatch, listenCompletedMatches, listenScheduledMatches, updateCompletedMatchMvp, deleteCompletedMatch, getStoredScorecard, savePlayerMatchStats, saveSavedLink, savePublicSettings, getPlayerCareerStats, registerAdminUser, makeId, safeId
+} from "./firebase-store.js?v=20260519a";
+import { writeLiveMatch } from "./firebase-live.js?v=20260519a";
+import { livePayload, storePayload, normalizeState, normalizeBatter, overText, calcSR, calcER, clone } from "./live-sync.js?v=20260519a";
+import { buildBallCommentary, buildSpecialCommentary, buildOverCommentary, chaseLine as buildChaseLine } from "./commentary-engine.js?v=20260519a";
 
 const $ = (id) => document.getElementById(id);
 const todayKey = () => new Date().toISOString().slice(0, 10).replaceAll("-", "");
@@ -88,6 +88,7 @@ const blankState = () => normalizeState({
 
 window.app = {
   uid: "",
+  authUser: null,
   adminOk: false,
   teams: [],
   leagues: [],
@@ -106,6 +107,7 @@ window.app = {
     this.bindBaseEvents();
     watchAuth(async (user) => {
       if (!user) return this.showLogin();
+      this.authUser = user;
       this.uid = user.uid;
       try {
         this.adminOk = await isAdmin(user.uid);
@@ -127,7 +129,13 @@ window.app = {
     this.ensureEliminatorControl();
     $("loginBtn").onclick = () => this.login();
     $("loginPassword").addEventListener("keydown", e => { if (e.key === "Enter") this.login(); });
+    $("profileBtn").onclick = (event) => { event.stopPropagation(); this.toggleProfilePopup(); };
+    $("addAdminBtn").onclick = () => this.openAdminRegisterModal();
     $("logoutBtn").onclick = () => logoutAdmin();
+    document.addEventListener("click", (event) => {
+      if (!$("profilePopup")?.classList.contains("hidden") && !event.target.closest(".profile-menu-wrap")) this.closeProfilePopup();
+    });
+    document.addEventListener("keydown", (event) => { if (event.key === "Escape") this.closeProfilePopup(); });
     document.querySelectorAll(".tab").forEach(btn => btn.onclick = () => this.openPage(btn.dataset.page));
     document.querySelectorAll("input[name='setupMode']").forEach(r => r.onchange = () => this.setSetupMode(r.value));
     ["teamASelect", "teamBSelect", "tossDecision", "tossWinner"].forEach(id => $(id).addEventListener("change", () => { this.clearOpeningSelections(); this.refreshSetupPlayers(); }));
@@ -150,6 +158,7 @@ window.app = {
     $("startSuperOverBtn").onclick = () => this.runOnce("startSuperOver", "startSuperOverBtn", () => this.startSuperOver());
     $("manualSaveBtn").onclick = () => this.runOnce("manualSave", "manualSaveBtn", () => this.manualSaveScore());
     $("clearBackupBtn").onclick = () => this.clearLocalBackups();
+    $("clearStorageBtn").onclick = () => this.clearAllLocalStorage();
     $("completeBtn").onclick = () => this.runOnce("completeMatch", "completeBtn", () => this.completeMatch());
     $("lockBtn").onclick = () => this.setLock(true);
     $("unlockBtn").onclick = () => this.setLock(false);
@@ -157,6 +166,14 @@ window.app = {
     document.querySelectorAll(".mode").forEach(b => b.onclick = () => this.setMode(b.dataset.mode));
     $("saveTeamBtn").onclick = () => this.runOnce("saveTeam", "saveTeamBtn", () => this.saveTeamForm());
     if ($("addTeamBtn")) $("addTeamBtn").onclick = () => this.openTeamForm();
+    if ($("teamProfileSearch")) $("teamProfileSearch").oninput = () => this.renderTeams();
+    if ($("playerProfileSearch")) $("playerProfileSearch").oninput = () => this.renderPlayers(this.teamById(this.selectedTeamId)?.players || []);
+    if ($("detailTeamSearch")) $("detailTeamSearch").oninput = () => this.renderDetailProfiles();
+    if ($("detailPlayerSearch")) $("detailPlayerSearch").oninput = () => this.renderDetailPlayers(this.detailTeamId);
+    if ($("editSelectedTeamBtn")) $("editSelectedTeamBtn").onclick = () => this.selectedTeamId ? this.openTeamForm(this.selectedTeamId) : this.toast("Select a team first.", true);
+    if ($("openTeamProfileBtn")) $("openTeamProfileBtn").onclick = () => this.openTeamProfile(this.selectedTeamId);
+    if ($("editSelectedPlayerBtn")) $("editSelectedPlayerBtn").onclick = () => this.selectedPlayerId ? this.selectPlayer(this.selectedPlayerId, true) : this.toast("Select a player first.", true);
+    if ($("deleteSelectedPlayerQuickBtn")) $("deleteSelectedPlayerQuickBtn").onclick = () => this.deleteSelectedPlayer();
     if ($("teamFormClose")) $("teamFormClose").onclick = () => $("teamFormModal").classList.remove("show");
     if ($("teamProfileClose")) $("teamProfileClose").onclick = () => $("teamProfileModal").classList.remove("show");
     if ($("teamProfileEdit")) $("teamProfileEdit").onclick = () => this.editTeamFromProfile();
@@ -165,6 +182,8 @@ window.app = {
     if ($("addPlayerBtn")) $("addPlayerBtn").onclick = () => this.openPlayerForm();
     if ($("playerFormClose")) $("playerFormClose").onclick = () => $("playerFormModal").classList.remove("show");
     $("deletePlayerBtn").onclick = () => this.runOnce("deletePlayer", "deletePlayerBtn", () => this.deleteSelectedPlayer());
+    $("adminRegisterCancel").onclick = () => $("adminRegisterModal").classList.remove("show");
+    $("adminRegisterSave").onclick = () => this.runOnce("adminRegister", "adminRegisterSave", () => this.registerAdminFromModal());
     if ($("refreshHealthBtn")) $("refreshHealthBtn").onclick = () => this.renderHealthCheck(true);
     $("teamLogoFile").onchange = e => this.uploadImage(e.target.files[0], "teamLogo");
     $("playerImageFile").onchange = e => this.uploadImage(e.target.files[0], "playerImage");
@@ -285,13 +304,63 @@ window.app = {
     if (String(code).includes("permission")) return "Permission denied.";
     return String(code);
   },
-  showLogin() { $("loginScreen").classList.remove("hidden"); $("adminApp").classList.add("hidden"); },
-  showAdmin() { $("loginScreen").classList.add("hidden"); $("adminApp").classList.remove("hidden"); },
+  showLogin() { this.authUser = null; this.uid = ""; this.closeProfilePopup(); $("loginScreen").classList.remove("hidden"); $("adminApp").classList.add("hidden"); },
+  showAdmin() { $("loginScreen").classList.add("hidden"); $("adminApp").classList.remove("hidden"); this.renderProfile(); },
+
+  profileDisplayName() {
+    const user = this.authUser || {};
+    return user.displayName || user.email?.split("@")[0] || "Admin";
+  },
+
+  renderProfile() {
+    const user = this.authUser || {};
+    const name = this.profileDisplayName();
+    const email = user.email || "-";
+    const initial = String(name || email || "A").trim().charAt(0).toUpperCase() || "A";
+    $("profileAvatar").textContent = initial;
+    $("profilePopupAvatar").textContent = initial;
+    $("profileName").textContent = name;
+    $("profilePopupName").textContent = name;
+    $("profilePopupEmail").textContent = email;
+    $("profileUid").textContent = user.uid || this.uid || "-";
+  },
+
+  toggleProfilePopup() {
+    const popup = $("profilePopup");
+    const willOpen = popup.classList.contains("hidden");
+    popup.classList.toggle("hidden", !willOpen);
+    $("profileBtn").setAttribute("aria-expanded", String(willOpen));
+    if (willOpen) this.renderProfile();
+  },
+
+  closeProfilePopup() {
+    $("profilePopup")?.classList.add("hidden");
+    $("profileBtn")?.setAttribute("aria-expanded", "false");
+  },
+
+  openAdminRegisterModal() {
+    $("newAdminEmail").value = "";
+    $("newAdminPassword").value = "";
+    $("adminRegisterModal").classList.add("show");
+  },
+
+  async registerAdminFromModal() {
+    const email = $("newAdminEmail").value;
+    const password = $("newAdminPassword").value;
+    try {
+      const uid = await registerAdminUser(email, password);
+      $("adminRegisterModal").classList.remove("show");
+      this.closeProfilePopup();
+      this.toast("Admin registered: " + uid);
+    } catch (error) {
+      this.toast("Unable to register admin: " + error.message, true);
+    }
+  },
 
   startListeners() {
-    listenTeams((teams) => { this.teams = teams; this.renderTeams(); this.fillTeamSelectors(); this.renderLeagueTeamChecks(); this.renderHealthCheck(); }, e => this.toast(e.message, true));
+    listenTeams((teams) => { this.teams = teams; this.renderTeams(); this.renderDetailProfiles(); this.fillTeamSelectors(); this.renderLeagueTeamChecks(); this.renderHealthCheck(); }, e => this.toast(e.message, true));
     listenLeagues((leagues) => { this.leagues = leagues; this.fillLeagueSelectors(); this.renderLeagueSchedule(); this.renderHealthCheck(); }, e => this.toast(e.message, true));
-    listenCompletedMatches((rows) => { this.completed = rows; this.renderHistory(); this.renderHealthCheck(); }, e => this.toast(e.message, true));
+    listenCompletedMatches((rows) => { this.completed = rows; this.renderHistory(); this.renderDetailProfiles(); this.renderHealthCheck(); }, e => this.toast(e.message, true));
     listenScheduledMatches((rows) => { this.scheduled = rows; this.renderHistory(); this.renderHealthCheck(); }, e => this.toast(e.message, true));
     this.restoreActiveMatch();
     this.render();
@@ -361,6 +430,17 @@ window.app = {
       this.toast(`Cleared ${keys.length} local backup${keys.length === 1 ? "" : "s"}.`);
     } catch (error) {
       this.toast("Unable to clear local backup: " + error.message, true);
+    }
+  },
+
+  clearAllLocalStorage() {
+    if (!confirm("Clear all local storage on this browser? This removes local backups, drafts, filters, counters, and saved UI settings.")) return;
+    try {
+      localStorage.clear();
+      this.toast("Local storage cleared. Reloading...");
+      setTimeout(() => location.reload(), 700);
+    } catch (error) {
+      this.toast("Unable to clear local storage: " + error.message, true);
     }
   },
 
@@ -1209,17 +1289,44 @@ window.app = {
     const out = {};
     const teamNames = [this.state.teamA?.name, this.state.teamB?.name].filter(Boolean);
     const oppositeTeam = (batTeam) => teamNames.find(n => n && n !== batTeam) || "";
+    const ensurePlayer = (key, name, teamName = "") => {
+      const id = key || safeId(name);
+      out[id] = out[id] || { playerId: id, playerName: name, teamName, runs: 0, balls: 0, dots: 0, battingDots: 0, fours: 0, sixes: 0, innings: 0, notOuts: 0, fifties: 0, hundreds: 0, ducks: 0, bestScore: 0, wickets: 0, bowlingBalls: 0, bowlingRuns: 0, bowlingDots: 0, maidens: 0, catches: 0, wides: 0, noBalls: 0 };
+      return out[id];
+    };
     Object.values(this.state.inningsDetails || {}).forEach(inn => {
       const bowlingTeam = inn.bowlingTeam || oppositeTeam(inn.team || inn.battingTeam || "");
       (inn.battingScorecard || []).forEach((b, i) => {
         const key = b.playerId || safeId(b.name);
-        out[key] = out[key] || { playerId: key, playerName: b.name, teamName: inn.team, runs: 0, balls: 0, fours: 0, sixes: 0, wickets: 0, bowlingBalls: 0, bowlingRuns: 0 };
-        out[key].runs += Number(b.r || 0); out[key].balls += Number(b.b || 0); out[key].dots = Number(out[key].dots || 0) + Number(b.dots || b.d || 0); out[key].battingDots = Number(out[key].battingDots || 0) + Number(b.dots || b.d || 0); out[key].fours += Number(b.f || 0); out[key].sixes += Number(b.s || 0); out[key].strikeRate = calcSR(out[key].runs, out[key].balls); out[key].battingPosition = i + 1;
+        const row = ensurePlayer(key, b.name, inn.team);
+        const runs = Number(b.r || b.runs || 0);
+        const balls = Number(b.b || b.balls || 0);
+        row.innings += 1; row.runs += runs; row.balls += balls; row.dots = Number(row.dots || 0) + Number(b.dots || b.d || 0); row.battingDots = Number(row.battingDots || 0) + Number(b.dots || b.d || 0); row.fours += Number(b.f || b.fours || 0); row.sixes += Number(b.s || b.sixes || 0); row.strikeRate = calcSR(row.runs, row.balls); row.battingPosition = i + 1;
+        if (!b.out && !b.retired) row.notOuts += 1;
+        if (runs >= 100) row.hundreds += 1;
+        if (runs >= 50 && runs < 100) row.fifties += 1;
+        if (runs === 0 && balls > 0) row.ducks += 1;
+        row.bestScore = Math.max(Number(row.bestScore || 0), runs);
       });
       Object.entries(inn.bowlerStats || {}).forEach(([name, s]) => {
         const key = s.playerId || safeId(name);
-        out[key] = out[key] || { playerId: key, playerName: s.playerName || s.name || name, teamName: bowlingTeam, runs: 0, balls: 0, fours: 0, sixes: 0, wickets: 0, bowlingBalls: 0, bowlingRuns: 0 };
-        out[key].wickets += Number(s.wkts || 0); out[key].bowlingBalls += Number(s.balls || 0); out[key].bowlingRuns += Number(s.runs || 0); out[key].bowlingDots = Number(out[key].bowlingDots || 0) + Number(s.dots || 0); out[key].economy = calcER(out[key].bowlingRuns, out[key].bowlingBalls);
+        const row = ensurePlayer(key, s.playerName || s.name || name, bowlingTeam);
+        row.wickets += Number(s.wkts || 0); row.bowlingBalls += Number(s.balls || 0); row.bowlingRuns += Number(s.runs || 0); row.bowlingDots = Number(row.bowlingDots || 0) + Number(s.dots || 0); row.wides += Number(s.wides || 0); row.noBalls += Number(s.noBalls || 0); row.economy = calcER(row.bowlingRuns, row.bowlingBalls);
+      });
+      (inn.overSummary || []).forEach(over => {
+        const runs = (over.timeline || []).reduce((sum, label) => sum + this.labelRuns(label), 0);
+        if (runs !== 0) return;
+        const bowlerName = over.bowler || "";
+        const stat = Object.values(inn.bowlerStats || {}).find(s => (s.playerName || s.name) === bowlerName) || {};
+        const row = ensurePlayer(stat.playerId || safeId(bowlerName), stat.playerName || stat.name || bowlerName, bowlingTeam);
+        row.maidens += 1;
+      });
+      (inn.fallOfWickets || []).forEach(line => {
+        const helper = String(line || "").match(/\bCaught by ([^-()]+)|\bCaught by ([^(]+)|\bCaught by (.+)$/i);
+        const name = (helper?.[1] || helper?.[2] || helper?.[3] || "").trim();
+        if (!name) return;
+        const row = ensurePlayer(safeId(name), name, bowlingTeam);
+        row.catches += 1;
       });
     });
     return out;
@@ -1578,7 +1685,9 @@ window.app = {
   ballClass(x) { const t = String(x); if (/^W(?!d)/i.test(t)) return "wicket"; if (t === "4") return "four"; if (t === "6") return "six"; return ""; },
 
   renderTeams() {
-    $("teamList").innerHTML = this.teams.map(t => `<div class="card-mini team-card" data-id="${t.teamId}"><div class="team-meta"><b>${this.safe(t.name)}</b><small>${this.safe(t.shortName || "")} · ${(t.players || []).length} players</small></div><button class="btn light team-profile-mini" type="button">Profile</button></div>`).join("") || "<div class='item'>No teams</div>";
+    const query = String($("teamProfileSearch")?.value || "").trim().toLowerCase();
+    const rows = this.teams.filter(t => !query || [t.name, t.shortName].some(v => String(v || "").toLowerCase().includes(query)));
+    $("teamList").innerHTML = rows.map(t => `<div class="card-mini team-card ${t.teamId === this.selectedTeamId ? "active" : ""}" data-id="${t.teamId}"><div class="team-meta"><b>${this.safe(t.name)}</b><small>${this.safe(t.shortName || "")} · ${(t.players || []).length} players</small></div><button class="btn light team-profile-mini" type="button">Profile</button></div>`).join("") || "<div class='item'>No teams</div>";
     document.querySelectorAll("#teamList .card-mini").forEach(el => {
       el.onclick = e => {
         if (e.target.closest(".team-profile-mini")) return;
@@ -1589,11 +1698,10 @@ window.app = {
         this.openTeamProfile(el.dataset.id);
       });
     });
-  },
-  selectTeam(id) {
+  },  selectTeam(id) {
     const t = this.teamById(id); if (!t) return; this.selectedTeamId = id; $("teamId").value = id; $("teamName").value = t.name || ""; $("teamShort").value = t.shortName || ""; $("teamLogo").value = t.logo || ""; $("selectedTeamName").textContent = t.name;
     if (this.activeUnsubPlayers) this.activeUnsubPlayers();
-    this.activeUnsubPlayers = listenPlayers(id, players => { t.players = players; this.renderPlayers(players); this.fillTeamSelectors(); }, e => this.toast(e.message, true));
+    this.renderTeamProfileInline(t); this.renderTeams(); this.activeUnsubPlayers = listenPlayers(id, players => { t.players = players; this.renderTeamProfileInline(t); this.renderPlayers(players); this.fillTeamSelectors(); }, e => this.toast(e.message, true));
   },
   openTeamForm(teamId = "") {
     if (teamId) this.selectTeam(teamId); else this.clearTeamForm();
@@ -1620,8 +1728,102 @@ window.app = {
     const league = this.currentLeague();
     return league?.pointsTable?.[teamName] || this.state.pointsTable?.[teamName] || {};
   },
+  renderTeamProfileInline(team = this.teamById(this.selectedTeamId)) {
+    const box = $("teamProfileInline");
+    if (!box) return;
+    if (!team) {
+      box.innerHTML = "Select a team to view profile.";
+      box.className = "profile-empty";
+      return;
+    }
+    const pts = this.teamLeaguePoints(team.name);
+    const logo = team.logo ? `<img src="${this.safe(team.logo)}" alt="">` : this.short(team.name);
+    box.className = "";
+    box.innerHTML = `<div class="profile-inline-head"><div class="profile-inline-logo">${logo}</div><div><h3>${this.safe(team.name)}</h3><p>${this.safe(team.shortName || this.short(team.name))}</p></div></div><div class="profile-fields"><div><span>Team ID</span><code>${this.safe(team.teamId || "-")}</code></div><div><span>Players</span><b>${(team.players || []).length}</b></div><div><span>Played</span><b>${pts.P || 0}</b></div><div><span>Won</span><b>${pts.W || 0}</b></div><div><span>Lost</span><b>${pts.L || 0}</b></div><div><span>Points</span><b>${pts.Pts || 0}</b></div><div><span>NRR</span><b>${this.nrr(pts)}</b></div><div><span>Logo</span><code>${this.safe(team.logo || "-")}</code></div></div><div class="profile-player-list">${(team.players || []).map(p => `<span>${this.safe(p.name)}</span>`).join("") || "<span>No players added</span>"}</div>`;
+  },
+  renderPlayerProfileInline(player = null) {
+    const box = $("playerProfileInline");
+    if (!box) return;
+    if (!player) {
+      box.innerHTML = "Select a player to view profile.";
+      box.className = "profile-empty";
+      if ($("selectedPlayerName")) $("selectedPlayerName").textContent = "Select player";
+      return;
+    }
+    box.className = "";
+    if ($("selectedPlayerName")) $("selectedPlayerName").textContent = player.name || "Player";
+    const avatar = player.image ? `<img src="${this.safe(player.image)}" alt="">` : this.short(player.name).slice(0, 2);
+    box.innerHTML = `<div class="profile-inline-head"><div class="profile-inline-avatar">${avatar}</div><div><h3>${this.safe(player.name || "-")}</h3><p>${this.safe(player.role || "Player")}</p></div></div><div class="profile-fields"><div><span>Player ID</span><code>${this.safe(player.playerId || "-")}</code></div><div><span>Jersey</span><b>${this.safe(player.jerseyNo || "-")}</b></div><div><span>Batting</span><b>${this.safe(player.battingStyle || "-")}</b></div><div><span>Bowling</span><b>${this.safe(player.bowlingStyle || "-")}</b></div><div><span>Team</span><b>${this.safe(this.teamById(this.selectedTeamId)?.name || "-")}</b></div><div><span>Photo</span><code>${this.safe(player.image || "-")}</code></div></div>`;
+  },
+  renderDetailProfiles() {
+    if (!$("detailTeamList")) return;
+    const q = String($("detailTeamSearch")?.value || "").trim().toLowerCase();
+    const rows = this.teams.filter(t => !q || [t.name, t.shortName].some(v => String(v || "").toLowerCase().includes(q)));
+    $("detailTeamList").innerHTML = rows.map(t => `<div class="card-mini team-card ${t.teamId === this.detailTeamId ? "active" : ""}" data-id="${t.teamId}"><div class="team-meta"><b>${this.safe(t.name)}</b><small>${this.safe(t.shortName || "")} · ${(t.players || []).length} players</small></div></div>`).join("") || "<div class='item'>No teams</div>";
+    document.querySelectorAll("#detailTeamList .team-card").forEach(el => el.onclick = () => this.showDetailTeam(el.dataset.id));
+    if (this.detailTeamId) this.renderDetailPlayers(this.detailTeamId);
+  },
+  showDetailTeam(teamId) {
+    const team = this.teamById(teamId);
+    if (!team) return;
+    this.detailTeamId = teamId;
+    this.renderDetailProfiles();
+    this.renderDetailPlayers(teamId);
+    const pts = this.teamLeaguePoints(team.name);
+    const logo = team.logo ? `<img src="${this.safe(team.logo)}" alt="">` : this.short(team.name);
+    const recent = (this.completed || []).filter(match => [match.teamA?.name, match.teamB?.name, match.battingTeam?.name, match.bowlingTeam?.name, match.matchTitle, match.title].some(v => String(v || "").includes(team.name))).slice(0, 6);
+    $("detailProfileView").className = "";
+    $("detailProfileView").innerHTML = `<div class="profile-inline-head"><div class="profile-inline-logo">${logo}</div><div><h3>${this.safe(team.name)}</h3><p>${this.safe(team.shortName || this.short(team.name))} · ${team.players?.length || 0} players</p></div></div><div class="profile-fields"><div><span>Played</span><b>${pts.P || 0}</b></div><div><span>Won</span><b>${pts.W || 0}</b></div><div><span>Lost</span><b>${pts.L || 0}</b></div><div><span>Tied</span><b>${pts.T || 0}</b></div><div><span>NR</span><b>${pts.NR || 0}</b></div><div><span>Points</span><b>${pts.Pts || 0}</b></div><div><span>NRR</span><b>${this.nrr(pts)}</b></div><div><span>Team ID</span><code>${this.safe(team.teamId || "-")}</code></div></div><h2 style="margin-top:16px">Squad</h2><div class="profile-player-list">${(team.players || []).map(p => `<span>${this.safe(p.name)}</span>`).join("") || "<span>No players</span>"}</div><h2 style="margin-top:16px">Recent Matches</h2>${recent.length ? recent.map(m => `<div class="item"><b>${this.safe(m.matchTitle || m.title || "Match")}</b><br><small>${this.safe(m.winnerText || "Result pending")} · ${this.safe([m.firstInnings, m.secondInnings].filter(Boolean).join(" | "))}</small></div>`).join("") : "<div class='item'>No recent matches</div>"}`;
+  },
+  renderDetailPlayers(teamId = this.detailTeamId) {
+    const team = this.teamById(teamId);
+    if ($("detailTeamTitle")) $("detailTeamTitle").textContent = team ? team.name : "Select team";
+    if (!$("detailPlayerList")) return;
+    const q = String($("detailPlayerSearch")?.value || "").trim().toLowerCase();
+    const players = (team?.players || []).filter(p => !q || [p.name, p.role, p.jerseyNo].some(v => String(v || "").toLowerCase().includes(q)));
+    $("detailPlayerList").innerHTML = players.map(p => `<div class="card-mini player-card" data-id="${p.playerId}"><div class="player-meta"><b>${this.safe(p.name)}</b><small>${this.safe(p.role || "Player")}${p.jerseyNo ? " · #" + this.safe(p.jerseyNo) : ""}</small></div></div>`).join("") || "<div class='item'>Select team / no players</div>";
+    document.querySelectorAll("#detailPlayerList .player-card").forEach(el => el.onclick = () => this.showDetailPlayer(teamId, el.dataset.id));
+  },
+  async showDetailPlayer(teamId, playerId) {
+    const team = this.teamById(teamId);
+    const player = (team?.players || []).find(p => p.playerId === playerId);
+    if (!team || !player) return;
+    let rows = [];
+    try { rows = await getPlayerCareerStats({ playerId: player.playerId, playerName: player.name }); } catch (_) {}
+    const stats = rows.length ? this.adminStatsFromCareerRows(rows) : this.adminPlayerStatsFromCompleted(player, team);
+    const avatar = player.image ? `<img src="${this.safe(player.image)}" alt="">` : this.short(player.name).slice(0, 2);
+    $("detailProfileView").className = "";
+    $("detailProfileView").innerHTML = `<div class="profile-inline-head"><div class="profile-inline-avatar">${avatar}</div><div><h3>${this.safe(player.name)}</h3><p>${this.safe(team.name)} · ${this.safe(player.role || "Player")}</p></div></div><div class="profile-fields"><div><span>Matches</span><b>${stats.matches}</b></div><div><span>Innings</span><b>${stats.innings}</b></div><div><span>Not Outs</span><b>${stats.notOuts}</b></div><div><span>Runs</span><b>${stats.runs}</b></div><div><span>Best</span><b>${stats.bestScore}</b></div><div><span>50s</span><b>${stats.fifties}</b></div><div><span>100s</span><b>${stats.hundreds}</b></div><div><span>Ducks</span><b>${stats.ducks}</b></div><div><span>4s</span><b>${stats.fours}</b></div><div><span>6s</span><b>${stats.sixes}</b></div><div><span>SR</span><b>${calcSR(stats.runs, stats.balls)}</b></div><div><span>Overs</span><b>${overText(stats.bowlingBalls)}</b></div><div><span>Wickets</span><b>${stats.wkts}</b></div><div><span>Economy</span><b>${calcER(stats.bowlingRuns, stats.bowlingBalls)}</b></div><div><span>Maidens</span><b>${stats.maidens}</b></div><div><span>Catches</span><b>${stats.catches}</b></div><div><span>Jersey</span><b>${this.safe(player.jerseyNo || "-")}</b></div><div><span>Batting</span><b>${this.safe(player.battingStyle || "-")}</b></div><div><span>Bowling</span><b>${this.safe(player.bowlingStyle || "-")}</b></div><div><span>UID</span><code>${this.safe(player.playerId || "-")}</code></div></div>`;
+  },
+  adminStatsFromCareerRows(rows = []) {
+    const s = { matches: 0, innings: 0, notOuts: 0, runs: 0, balls: 0, fours: 0, sixes: 0, bestScore: 0, fifties: 0, hundreds: 0, ducks: 0, wkts: 0, bowlingBalls: 0, bowlingRuns: 0, maidens: 0, catches: 0 };
+    const matches = new Set();
+    rows.forEach(r => {
+      if (r.matchId) matches.add(r.matchId);
+      const runs = Number(r.runs || 0);
+      s.innings += Number(r.innings || (runs || Number(r.balls || 0) ? 1 : 0));
+      s.notOuts += Number(r.notOuts || 0); s.runs += runs; s.balls += Number(r.balls || 0); s.fours += Number(r.fours || 0); s.sixes += Number(r.sixes || 0); s.bestScore = Math.max(s.bestScore, Number(r.bestScore || runs || 0)); s.fifties += Number(r.fifties || 0); s.hundreds += Number(r.hundreds || 0); s.ducks += Number(r.ducks || 0); s.wkts += Number(r.wickets || 0); s.bowlingBalls += Number(r.bowlingBalls || 0); s.bowlingRuns += Number(r.bowlingRuns || 0); s.maidens += Number(r.maidens || 0); s.catches += Number(r.catches || 0);
+    });
+    s.matches = matches.size || rows.length;
+    return s;
+  },
+  adminPlayerStatsFromCompleted(player, team) {
+    const rows = [];
+    (this.completed || []).forEach(match => {
+      const innings = Object.values(match.inningsDetails || match.fullScorecardData?.inningsDetails || {});
+      innings.forEach(inn => (inn.battingScorecard || []).forEach(b => {
+        if (!((b.playerId && b.playerId === player.playerId) || b.name === player.name)) return;
+        const runs = Number(b.r || b.runs || 0);
+        const balls = Number(b.b || b.balls || 0);
+        rows.push({ matchId: match.matchId, runs, balls, fours: b.f || b.fours || 0, sixes: b.s || b.sixes || 0, innings: 1, notOuts: !b.out && !b.retired ? 1 : 0, bestScore: runs, fifties: runs >= 50 && runs < 100 ? 1 : 0, hundreds: runs >= 100 ? 1 : 0, ducks: runs === 0 && balls > 0 ? 1 : 0 });
+      }));
+    });
+    return this.adminStatsFromCareerRows(rows);
+  },
   renderPlayers(players = []) {
-    $("playerList").innerHTML = players.map(p => `<div class="card-mini player-card" data-id="${p.playerId}"><div class="player-meta"><b>${this.safe(p.name)}</b><small>${this.safe(p.role || "Player")}</small></div><button class="btn light player-edit-mini" type="button">Edit</button></div>`).join("") || "<div class='item'>No players</div>";
+    const query = String($("playerProfileSearch")?.value || "").trim().toLowerCase();
+    const rows = players.filter(p => !query || [p.name, p.role, p.jerseyNo].some(v => String(v || "").toLowerCase().includes(query)));
+    $("playerList").innerHTML = rows.map(p => `<div class="card-mini player-card ${p.playerId === this.selectedPlayerId ? "active" : ""}" data-id="${p.playerId}"><div class="player-meta"><b>${this.safe(p.name)}</b><small>${this.safe(p.role || "Player")}${p.jerseyNo ? " · #" + this.safe(p.jerseyNo) : ""}</small></div><button class="btn light player-edit-mini" type="button">Edit</button></div>`).join("") || "<div class='item'>No players</div>";
     document.querySelectorAll("#playerList .player-card").forEach(el => {
       el.onclick = e => {
         if (e.target.closest(".player-edit-mini")) return;
@@ -1647,6 +1849,8 @@ window.app = {
     const p = (team?.players || []).find(x => x.playerId === id);
     if (!p) return;
     this.selectedPlayerId = id;
+    this.renderPlayerProfileInline(p);
+    this.renderPlayers(team?.players || []);
     $("playerId").value = id;
     $("playerName").value = p.name || "";
     $("playerRole").value = p.role || "Batsman";
@@ -1663,10 +1867,10 @@ window.app = {
     }
   },
   async saveTeamForm() { const id = $("teamId").value || undefined; const name = $("teamName").value.trim(); if (!name) return this.toast("Team name is required.", true); const teamId = await saveTeam({ teamId: id, name, shortName: $("teamShort").value.trim(), logo: $("teamLogo").value.trim() }); this.selectTeam(teamId); $("teamFormModal")?.classList.remove("show"); this.toast("Team saved."); },
-  clearTeamForm() { ["teamId", "teamName", "teamShort", "teamLogo"].forEach(id => $(id).value = ""); this.selectedTeamId = ""; },
+  clearTeamForm() { ["teamId", "teamName", "teamShort", "teamLogo"].forEach(id => $(id).value = ""); this.selectedTeamId = ""; this.renderTeamProfileInline(null); },
   async deleteSelectedTeam() { if (!this.selectedTeamId || !confirm("Delete this team?")) return; await deleteTeam(this.selectedTeamId); this.clearTeamForm(); $("teamFormModal")?.classList.remove("show"); this.toast("Team deleted."); },
   async savePlayerForm() { if (!this.selectedTeamId) return this.toast("Select a team first.", true); const name = $("playerName").value.trim(); if (!name) return this.toast("Player name is required.", true); await savePlayer(this.selectedTeamId, { playerId: $("playerId").value || undefined, name, role: $("playerRole").value, battingStyle: $("battingStyle").value, bowlingStyle: $("bowlingStyle").value, jerseyNo: $("jerseyNo").value, image: $("playerImage").value.trim() }); this.clearPlayerForm(false); $("playerFormModal")?.classList.remove("show"); this.toast("Player saved."); },
-  clearPlayerForm(clearId = true) { ["playerId", "playerName", "battingStyle", "bowlingStyle", "jerseyNo", "playerImage"].forEach(id => $(id).value = ""); if (clearId) this.selectedPlayerId = ""; },
+  clearPlayerForm(clearId = true) { ["playerId", "playerName", "battingStyle", "bowlingStyle", "jerseyNo", "playerImage"].forEach(id => $(id).value = ""); if (clearId) { this.selectedPlayerId = ""; this.renderPlayerProfileInline(null); } },
   async deleteSelectedPlayer() { if (!this.selectedTeamId || !this.selectedPlayerId || !confirm("Delete this player?")) return; await deletePlayer(this.selectedTeamId, this.selectedPlayerId); this.clearPlayerForm(); $("playerFormModal")?.classList.remove("show"); this.toast("Player deleted."); },
 
   async uploadImage(file, targetInput) { if (!file) return; if (!cloudinaryConfig.cloudName || cloudinaryConfig.cloudName.includes("YOUR")) return this.toast("Cloudinary configuration is required.", true); const fd = new FormData(); fd.append("file", file); fd.append("upload_preset", cloudinaryConfig.uploadPreset); try { const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudinaryConfig.cloudName}/image/upload`, { method: "POST", body: fd }); if (!res.ok) throw new Error("Cloudinary upload failed"); const json = await res.json(); $(targetInput).value = json.secure_url || json.url || ""; this.toast("Image uploaded."); } catch (e) { this.toast(e.message, true); } },

@@ -1,6 +1,6 @@
-import { listenLiveMatch, trackViewer } from "./firebase-live.js";
-import { listenMatch, listenCompletedMatches, getLatestPublicMatch, getPlayerCareerStats, listenPublicSettings } from "./firebase-store.js";
-import { mergeMatch, overText, calcSR, calcER, normalizeState } from "./live-sync.js";
+import { listenLiveMatch, trackViewer } from "./firebase-live.js?v=20260519a";
+import { listenMatch, listenCompletedMatches, getLatestPublicMatch, getPlayerCareerStats, listenPublicSettings } from "./firebase-store.js?v=20260519a";
+import { mergeMatch, overText, calcSR, calcER, normalizeState } from "./live-sync.js?v=20260519a";
 
 const $ = id => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -15,6 +15,7 @@ window.app = {
   publicSettings: {},
   scoreTeam: "teamA",
   scheduleFilter: "all",
+  graphMode: "runs",
   unsubs: [],
   viewerId: crypto?.randomUUID?.() || `viewer_${Date.now()}`,
 
@@ -26,6 +27,7 @@ window.app = {
     $("modalClose").onclick = () => this.closeModal();
     $("retryBtn").onclick = () => this.retry();
     document.querySelectorAll("[data-schedule-filter]").forEach(b => b.onclick = () => this.setScheduleFilter(b.dataset.scheduleFilter));
+    document.querySelectorAll("[data-graph-mode]").forEach(b => b.onclick = () => this.setGraphMode(b.dataset.graphMode));
     this.bootstrap();
   },
 
@@ -304,8 +306,17 @@ window.app = {
   allBatters(m) { const out=[]; Object.values(m.inningsDetails||{}).forEach(i=>out.push(...(i.battingScorecard||[]))); if(!out.length) out.push(...this.currentBattingRows(m)); return out; },
   renderRunGraph(m) {
     const series = this.graphSeries(m);
-    $("graphSummary").textContent = series.length > 1 ? "Innings comparison" : "Live progression";
-    $("runGraph").innerHTML = this.runWormSvg(series, m.totalOvers);
+    const mode = this.graphMode === "rate" ? "rate" : "runs";
+    document.querySelectorAll("[data-graph-mode]").forEach(b => b.classList.toggle("active", b.dataset.graphMode === mode));
+    $("graphTitle").textContent = mode === "rate" ? "Run rate comparison" : "Scoring comparison";
+    $("graphSummary").textContent = mode === "rate"
+      ? (series.length > 1 ? "Run rate comparison" : "Current run rate")
+      : (series.length > 1 ? "Innings comparison" : "Live progression");
+    $("runGraph").innerHTML = this.runWormSvg(series, m.totalOvers, mode);
+  },
+  setGraphMode(mode) {
+    this.graphMode = mode === "rate" ? "rate" : "runs";
+    this.renderRunGraph(this.state);
   },
   graphSeries(m) {
     const innings = Object.values(m.inningsDetails || {});
@@ -361,45 +372,49 @@ window.app = {
     if (/Nb|no/i.test(text)) return n || 1;
     return Number.isFinite(n) ? n : 0;
   },
-  runWormSvg(series = [], totalOvers = 0) {
+  runWormSvg(series = [], totalOvers = 0, mode = "runs") {
     const mobile = window.matchMedia?.("(max-width: 520px)").matches;
-    const width = mobile ? 360 : 720;
-    const height = mobile ? 238 : 330;
-    const pad = mobile ? 34 : 52;
+    const width = mobile ? 390 : 720;
+    const height = mobile ? 260 : 330;
+    const pad = mobile ? 32 : 52;
     const all = series.flatMap(s => s.points);
-    const maxRunsRaw = Math.max(20, ...all.map(p => Number(p.runs || 0)));
-    const maxRuns = Math.ceil(maxRunsRaw / 50) * 50;
+    const pointValue = p => mode === "rate" ? (Number(p.over || 0) > 0 ? Number(p.runs || 0) / Number(p.over || 1) : 0) : Number(p.runs || 0);
+    const maxRaw = Math.max(mode === "rate" ? 8 : 20, ...all.map(pointValue));
+    const maxRuns = mode === "rate" ? Math.ceil(maxRaw / 2) * 2 : Math.ceil(maxRaw / 50) * 50;
     const maxOverRaw = Math.max(1, ...all.map(p => Number(p.over || 0)));
     const maxOver = Math.max(1, Math.ceil(maxOverRaw), Number(totalOvers || 0));
     const colors = ["#e53935", "#1a73e8", "#0f766e", "#7c3aed"];
     const x = over => pad + (Number(over || 0) / maxOver) * (width - pad * 2);
-    const y = runs => height - pad - (Number(runs || 0) / maxRuns) * (height - pad * 2);
-    const grid = [0,.2,.4,.6,.8,1].map(v => {
+    const y = value => height - pad - (Number(value || 0) / maxRuns) * (height - pad * 2);
+    const gridValues = mobile ? [0,.25,.5,.75,1] : [0,.2,.4,.6,.8,1];
+    const grid = gridValues.map(v => {
       const gy = y(maxRuns * v);
-      return `<line x1="${pad}" y1="${gy}" x2="${width-pad}" y2="${gy}" class="graph-grid"/><text x="${pad-38}" y="${gy+4}" class="graph-label">${Math.round(maxRuns*v)}</text>`;
+      return `<line x1="${pad}" y1="${gy}" x2="${width-pad}" y2="${gy}" class="graph-grid"/><text x="${mobile ? pad-26 : pad-38}" y="${gy+4}" class="graph-label">${Math.round(maxRuns*v)}</text>`;
     }).join("");
-    const tickCount = Math.min(maxOver, mobile ? 5 : 10);
+    const tickCount = Math.min(maxOver, mobile ? 4 : 10);
     const overTicks = Array.from({ length: tickCount + 1 }, (_, i) => Math.round((maxOver / tickCount) * i)).filter((v, i, arr) => i === 0 || v !== arr[i - 1]).map(over => `<line x1="${x(over)}" y1="${height-pad}" x2="${x(over)}" y2="${height-pad+5}" class="graph-axis"/><text x="${x(over)-4}" y="${height-18}" class="graph-label">${over}</text>`).join("");
-    const legendSlotWidth = mobile ? 118 : 190;
+    const legendSlotWidth = mobile ? 166 : 190;
     const legendName = (name) => {
       const raw = String(name || "");
       const maxChars = Math.max(5, Math.floor((legendSlotWidth - 28) / (mobile ? 5.7 : 7.1)));
       return raw.length > maxChars ? `${raw.slice(0, Math.max(2, maxChars - 3))}...` : raw;
     };
     const legend = series.map((s, i) => {
-      const lx = pad + i * legendSlotWidth;
-      const marker = i === 1 ? `<rect x="${lx}" y="20" width="14" height="14" rx="1" fill="${colors[i%colors.length]}"/>` : `<circle cx="${lx+7}" cy="27" r="7" fill="${colors[i%colors.length]}"/>`;
-      return `${marker}<text x="${lx+22}" y="31" class="graph-key" fill="#4b5563">${this.safe(legendName(s.name))}</text>`;
+      const lx = pad + (mobile ? (i % 2) * legendSlotWidth : i * legendSlotWidth);
+      const ly = mobile ? 18 + Math.floor(i / 2) * 16 : 20;
+      const marker = i === 1 ? `<rect x="${lx}" y="${ly}" width="12" height="12" rx="1" fill="${colors[i%colors.length]}"/>` : `<circle cx="${lx+6}" cy="${ly+6}" r="6" fill="${colors[i%colors.length]}"/>`;
+      return `${marker}<text x="${lx+18}" y="${ly+10}" class="graph-key" fill="#4b5563">${this.safe(legendName(s.name))}</text>`;
     }).join("");
     const lines = series.map((s, i) => {
-      const d = s.points.map((p, idx) => `${idx ? "L" : "M"}${x(p.over).toFixed(1)},${y(p.runs).toFixed(1)}`).join(" ");
+      const d = s.points.map((p, idx) => `${idx ? "L" : "M"}${x(p.over).toFixed(1)},${y(pointValue(p)).toFixed(1)}`).join(" ");
       const points = s.points.map(p => {
-        const label = `${this.safe(s.name)} | Over ${p.over} | ${p.runs}/${p.wkts || 0}`;
-        return p.wicket ? `<circle cx="${x(p.over)}" cy="${y(p.runs)}" r="5" fill="${colors[i%colors.length]}" stroke="#fff" stroke-width="2"><title>${label}</title></circle>` : "";
+        const value = mode === "rate" ? pointValue(p).toFixed(2) : `${p.runs}/${p.wkts || 0}`;
+        const label = `${this.safe(s.name)} | Over ${p.over} | ${value}`;
+        return p.wicket ? `<circle cx="${x(p.over)}" cy="${y(pointValue(p))}" r="5" fill="${colors[i%colors.length]}" stroke="#fff" stroke-width="2"><title>${label}</title></circle>` : "";
       }).join("");
       return `<path d="${d}" fill="none" stroke="${colors[i%colors.length]}" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>${points}`;
     }).join("");
-    this.graphState = { series, width, height, pad, maxOver, maxRuns, colors };
+    this.graphState = { series, width, height, pad, maxOver, maxRuns, colors, mode };
     setTimeout(() => this.bindGraphTooltip(), 0);
     return `<div class="graph-wrap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Scoring comparison graph"><rect x="0" y="0" width="${width}" height="${height}" fill="#fff"/>${legend}${grid}${overTicks}<line x1="${pad}" y1="${height-pad}" x2="${width-pad}" y2="${height-pad}" class="graph-axis"/><line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height-pad}" class="graph-axis"/>${lines}<line id="graphGuide" class="graph-guide hidden" x1="${pad}" y1="${pad}" x2="${pad}" y2="${height-pad}"/><g id="graphHoverDots"></g><rect class="graph-capture" x="${pad}" y="${pad}" width="${width-pad*2}" height="${height-pad*2}"/><text x="${pad-4}" y="${height-7}" class="graph-label">overs</text></svg><div id="graphTooltip" class="graph-tooltip hidden"></div></div>`;
   },
@@ -427,6 +442,7 @@ window.app = {
       const localX = (ev.clientX - svgRect.left) * (state.width / svgRect.width);
       const clampedX = Math.min(state.width - state.pad, Math.max(state.pad, localX));
       const over = ((clampedX - state.pad) / (state.width - state.pad * 2)) * state.maxOver;
+      const rowValue = point => state.mode === "rate" ? (Number(point.over || 0) > 0 ? Number(point.runs || 0) / Number(point.over || 1) : 0) : Number(point.runs || 0);
       const rows = state.series.map((s, i) => ({ ...pointAtOver(s.points, over), name: s.name, color: state.colors[i % state.colors.length], shape: i === 1 ? "square" : "dot" }));
       const tooltipOver = rows.reduce((best, point) => Math.abs(point.over - over) < Math.abs(best.over - over) ? point : best, rows[0]);
       guide?.classList.remove("hidden");
@@ -436,11 +452,11 @@ window.app = {
       }
       if (dots) {
         dots.innerHTML = rows.map(row => {
-          const cy = state.height - state.pad - (Number(row.runs || 0) / state.maxRuns) * (state.height - state.pad * 2);
+          const cy = state.height - state.pad - (rowValue(row) / state.maxRuns) * (state.height - state.pad * 2);
           return `<circle class="graph-hover-dot" cx="${clampedX.toFixed(1)}" cy="${cy.toFixed(1)}" r="5" fill="${row.color}"/>`;
         }).join("");
       }
-      tip.innerHTML = `<b>${overTextFromValue(tooltipOver.over)} overs</b>${rows.map(row => `<div class="graph-tip-row"><span><i class="${row.shape}" style="background:${row.color}"></i>${this.safe(row.name)}</span><strong>${row.runs}/${row.wkts || 0}</strong></div>`).join("")}`;
+      tip.innerHTML = `<b>${overTextFromValue(tooltipOver.over)} overs</b>${rows.map(row => `<div class="graph-tip-row"><span><i class="${row.shape}" style="background:${row.color}"></i>${this.safe(row.name)}</span><strong>${state.mode === "rate" ? rowValue(row).toFixed(2) : `${row.runs}/${row.wkts || 0}`}</strong></div>`).join("")}`;
       tip.classList.remove("hidden");
       if (window.matchMedia?.("(max-width: 520px)").matches) {
         tip.style.left = "";
@@ -474,7 +490,26 @@ window.app = {
     box.addEventListener("pointerdown", show);
     box.addEventListener("pointerleave", hide);
   },
-  renderPlayers(m) { const blocks=[]; Object.entries(m.teams||{}).forEach(([team,players]) => (players||[]).forEach(p => { const meta=m.teamInfo?.[team]?.players?.[p]||{}; blocks.push(`<div class="player" onclick="app.playerModal('${encodeURIComponent(team)}','${encodeURIComponent(p)}','${encodeURIComponent(meta.playerId || "")}')"><div class="avatar">${meta.image?`<img src="${this.safe(meta.image)}">`:this.short(p).slice(0,2)}</div><b>${this.safe(p)}</b><br><small>${this.safe(team)}</small></div>`); })); $("playersList").innerHTML = blocks.join("") || "<span class='muted'>No players</span>"; },
+  activeTeamNames(m = this.state) {
+    const names = [
+      m.teamA?.name, m.teamB?.name,
+      m.battingTeam?.name, m.bowlingTeam?.name,
+      typeof m.teamA === "string" ? m.teamA : "",
+      typeof m.teamB === "string" ? m.teamB : ""
+    ].filter(Boolean).map(x => String(x).trim()).filter(Boolean);
+    return [...new Set(names)];
+  },
+  renderPlayers(m) {
+    const matchTeams = this.activeTeamNames(m);
+    const entries = Object.entries(m.teams || {});
+    const visibleTeams = matchTeams.length ? entries.filter(([team]) => matchTeams.includes(team)) : entries;
+    const blocks = [];
+    visibleTeams.forEach(([team, players]) => (players || []).forEach(p => {
+      const meta = m.teamInfo?.[team]?.players?.[p] || {};
+      blocks.push(`<div class="player" onclick="app.playerModal('${encodeURIComponent(team)}','${encodeURIComponent(p)}','${encodeURIComponent(meta.playerId || "")}')"><div class="avatar">${meta.image ? `<img src="${this.safe(meta.image)}">` : this.short(p).slice(0,2)}</div><b>${this.safe(p)}</b><br><small>${this.safe(team)}</small></div>`);
+    }));
+    $("playersList").innerHTML = blocks.join("") || "<span class='muted'>No players</span>";
+  },
   renderMatches() {
     const s = this.state || {};
     const isScheduled = String(s.status || "").toLowerCase() === "scheduled" && !s.liveStarted;
@@ -522,11 +557,16 @@ window.app = {
       <h3 style="margin:16px 0 8px">Batting</h3>
       <div class="quick-grid">
         <div><span>Innings</span><b>${stats.innings}</b></div>
+        <div><span>Not Outs</span><b>${stats.notOuts}</b></div>
         <div><span>Runs</span><b>${stats.runs}</b></div>
+        <div><span>Best</span><b>${stats.bestScore}</b></div>
         <div><span>Balls Faced</span><b>${stats.balls}</b></div>
         <div><span>Batting Dots</span><b>${stats.dots}</b></div>
         <div><span>4s</span><b>${stats.fours}</b></div>
         <div><span>6s</span><b>${stats.sixes}</b></div>
+        <div><span>50s</span><b>${stats.fifties}</b></div>
+        <div><span>100s</span><b>${stats.hundreds}</b></div>
+        <div><span>Ducks</span><b>${stats.ducks}</b></div>
         <div><span>SR</span><b>${batSR}</b></div>
       </div>
 
@@ -536,10 +576,12 @@ window.app = {
         <div><span>Balls Bowled</span><b>${stats.bowlingBalls}</b></div>
         <div><span>Runs Given</span><b>${stats.bowlingRuns}</b></div>
         <div><span>Bowling Dots</span><b>${stats.bowlingDots}</b></div>
+        <div><span>Maidens</span><b>${stats.maidens}</b></div>
         <div><span>Wickets</span><b>${stats.wkts}</b></div>
         <div><span>Economy</span><b>${bowlEco}</b></div>
         <div><span>Wides</span><b>${stats.wides}</b></div>
         <div><span>No Balls</span><b>${stats.noBalls}</b></div>
+        <div><span>Catches</span><b>${stats.catches}</b></div>
       </div>
     `;
     $("modal").classList.add("show");
@@ -574,22 +616,32 @@ window.app = {
     return meta.image ? `<img src="${this.safe(meta.image)}">` : this.short(player).slice(0,2);
   },
   statsFromCareerRows(rows = []) {
-    const s = { runs: 0, balls: 0, dots: 0, fours: 0, sixes: 0, wkts: 0, bowlingBalls: 0, bowlingRuns: 0, bowlingDots: 0, wides: 0, noBalls: 0, matches: 0, innings: 0 };
+    const s = { runs: 0, balls: 0, dots: 0, fours: 0, sixes: 0, wkts: 0, bowlingBalls: 0, bowlingRuns: 0, bowlingDots: 0, wides: 0, noBalls: 0, matches: 0, innings: 0, notOuts: 0, bestScore: 0, fifties: 0, hundreds: 0, ducks: 0, maidens: 0, catches: 0 };
     const matches = new Set();
     rows.forEach(r => {
       if (r.matchId) matches.add(r.matchId);
-      if (Number(r.balls || 0) || Number(r.runs || 0)) s.innings += 1;
-      s.runs += Number(r.runs || 0);
+      const runs = Number(r.runs || 0);
+      const balls = Number(r.balls || 0);
+      if (Number(r.innings || 0)) s.innings += Number(r.innings || 0);
+      else if (balls || runs) s.innings += 1;
+      s.runs += runs;
       s.balls += Number(r.balls || 0);
       s.dots += Number(r.battingDots ?? r.dots ?? 0);
       s.fours += Number(r.fours || 0);
       s.sixes += Number(r.sixes || 0);
+      s.notOuts += Number(r.notOuts || 0);
+      s.bestScore = Math.max(s.bestScore, Number(r.bestScore || runs || 0));
+      s.fifties += Number(r.fifties || 0);
+      s.hundreds += Number(r.hundreds || 0);
+      s.ducks += Number(r.ducks || 0);
       s.wkts += Number(r.wickets || 0);
       s.bowlingBalls += Number(r.bowlingBalls || 0);
       s.bowlingRuns += Number(r.bowlingRuns || 0);
       s.bowlingDots += Number(r.bowlingDots || 0);
+      s.maidens += Number(r.maidens || 0);
       s.wides += Number(r.wides || 0);
       s.noBalls += Number(r.noBalls || 0);
+      s.catches += Number(r.catches || 0);
     });
     s.matches = matches.size || rows.length;
     return s;
@@ -603,7 +655,7 @@ window.app = {
   playerStats(player, teamName = "", playerId = "") {
     const meta = teamName ? (this.state.teamInfo?.[teamName]?.players?.[player] || {}) : {};
     const targetPlayerId = playerId || meta.playerId || "";
-    const s = { runs: 0, balls: 0, dots: 0, fours: 0, sixes: 0, wkts: 0, bowlingBalls: 0, bowlingRuns: 0, bowlingDots: 0, wides: 0, noBalls: 0, matches: 0, innings: 0 };
+    const s = { runs: 0, balls: 0, dots: 0, fours: 0, sixes: 0, wkts: 0, bowlingBalls: 0, bowlingRuns: 0, bowlingDots: 0, wides: 0, noBalls: 0, matches: 0, innings: 0, notOuts: 0, bestScore: 0, fifties: 0, hundreds: 0, ducks: 0, maidens: 0, catches: 0 };
     const countedMatches = new Set();
     const processedMatches = new Set();
 
@@ -629,12 +681,19 @@ window.app = {
 
     const addBatter = (bat, innTeam = "") => {
       if (!sameBatter(bat, innTeam)) return false;
+      const runs = Number(bat.r || bat.runs || 0);
+      const balls = Number(bat.b || bat.balls || 0);
       s.innings += 1;
-      s.runs += Number(bat.r || bat.runs || 0);
-      s.balls += Number(bat.b || bat.balls || 0);
+      s.runs += runs;
+      s.balls += balls;
       s.dots += Number(bat.dots || bat.d || 0);
       s.fours += Number(bat.f || bat.fours || 0);
       s.sixes += Number(bat.s || bat.sixes || 0);
+      if (!bat.out && !bat.retired) s.notOuts += 1;
+      if (runs >= 100) s.hundreds += 1;
+      if (runs >= 50 && runs < 100) s.fifties += 1;
+      if (runs === 0 && balls > 0) s.ducks += 1;
+      s.bestScore = Math.max(s.bestScore, runs);
       return true;
     };
 
@@ -644,6 +703,7 @@ window.app = {
       s.bowlingBalls += Number(stat.balls || stat.b || 0);
       s.bowlingRuns += Number(stat.runs ?? stat.r ?? 0);
       s.bowlingDots += Number(stat.dots || stat.d || 0);
+      s.maidens += Number(stat.maidens || 0);
       s.wides += Number(stat.wides || stat.wd || 0);
       s.noBalls += Number(stat.noBalls || stat.nb || 0);
       return true;
@@ -674,6 +734,23 @@ window.app = {
         inningSeen.add(key);
         battingRows.forEach(bat => { if (addBatter(bat, innTeam)) seen = true; });
       Object.entries(inn.bowlerStats || {}).forEach(([name, stat]) => { if (addBowler(stat.playerName || stat.name || name, stat, bowlingTeam)) seen = true; });
+        (inn.overSummary || []).forEach(over => {
+          if ((over.timeline || []).reduce((sum, label) => sum + this.ballRuns(label), 0) !== 0) return;
+          const bowlerName = over.bowler || "";
+          const stat = Object.values(inn.bowlerStats || {}).find(x => (x.playerName || x.name) === bowlerName) || {};
+          if (sameBowler(stat.playerName || stat.name || bowlerName, stat, bowlingTeam)) {
+            s.maidens += 1;
+            seen = true;
+          }
+        });
+        (inn.fallOfWickets || []).forEach(line => {
+          const helper = String(line || "").match(/\bCaught by ([^-()]+)|\bCaught by ([^(]+)|\bCaught by (.+)$/i);
+          const name = (helper?.[1] || helper?.[2] || helper?.[3] || "").trim();
+          if (name && name === player) {
+            s.catches += 1;
+            seen = true;
+          }
+        });
       };
 
       innings.forEach(addInnings);
