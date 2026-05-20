@@ -2,6 +2,7 @@
 body{margin:0;font-family:Inter,Segoe UI,Roboto,Arial,sans-serif;background:#f3f6fa;color:#142033}
 body{overflow-x:hidden}
 .hidden{display:none!important}
+.role-hidden{display:none!important}
 .login-screen{position:fixed;inset:0;background:#111827;display:flex;align-items:center;justify-content:center;padding:16px;z-index:20}
 .login-card{width:min(430px,96vw);background:#fff;border-radius:18px;padding:22px;box-shadow:0 28px 70px rgba(0,0,0,.35)}
 .brand{display:flex;align-items:center;gap:12px;margin-bottom:18px}
@@ -78,6 +79,8 @@ body{overflow-x:hidden}
 .btn.warn{background:#b45309;color:#fff}
 .btn.danger{background:#b91c1c;color:#fff}
 .btn.light{background:#eef3f8;color:#334155}
+.btn.whatsapp{background:#16a34a;color:#fff}
+.top-btn{padding:8px 10px;font-size:12px}
 .btn.toggle{width:100%;margin:10px 0 4px;border:1px solid #cfd9e6;text-align:left}
 .btn.toggle.on{background:#ecfdf5;color:#0f766e;border-color:#99f6e4}
 .btn.toggle.off{background:#fef2f2;color:#b91c1c;border-color:#fecaca}
@@ -94,6 +97,8 @@ body{overflow-x:hidden}
 .qr-panel .qr-wrapper{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center}
 .qr-panel img{width:150px;height:150px;border:1px solid #e2e8f0;border-radius:16px;background:#fff}
 .qr-panel p{margin:0;color:#475569;font-size:13px}
+.share-panel{display:grid;gap:6px;margin-top:10px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:12px;padding:10px}
+.share-panel small{color:#166534;font-weight:800}
 .mode-row{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:12px}
 .timed-control{display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:12px}
 .timed-control input{height:42px}
@@ -164,6 +169,26 @@ th{background:#f1f5f9;color:#475569;text-transform:uppercase;font-size:11px}
 .admin-team-head p{margin:3px 0 0;color:#64748b;font-weight:800}
 .admin-team-squad{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
 .admin-team-squad span{border:1px solid #d8e1ec;background:#f8fafc;border-radius:999px;padding:6px 9px;font-size:12px;font-weight:800;color:#334155}
+.admin-audit-list{display:grid;gap:10px}
+.admin-audit-card{display:grid;grid-template-columns:minmax(0,1fr) 150px 110px;gap:10px;align-items:center;border:1px solid #d8e1ec;border-radius:12px;padding:12px;background:#fff}
+.admin-audit-card.inactive{background:#f8fafc;opacity:.72}
+.admin-audit-card b{display:block;color:#10243d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.admin-audit-card code{display:block;color:#64748b;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:4px}
+.admin-audit-card small{display:block;color:#64748b;margin-top:4px;font-weight:800}
+.admin-audit-card select{padding:8px;font-size:12px}
+.admin-audit-status{display:inline-flex;justify-content:center;border-radius:999px;padding:6px 8px;font-size:11px;font-weight:900;background:#ecfdf5;color:#0f766e}
+.admin-audit-card.inactive .admin-audit-status{background:#f1f5f9;color:#64748b}
+.iphone-preview{display:grid;place-items:center;padding:8px 0 2px}
+.iphone-shell{--phone-scale:min(1,calc((70vh - 32px) / 932),calc((100vw - 74px) / 430));position:relative;width:430px;height:932px;background:#111827;border:2px solid #273244;border-radius:48px;padding:12px;box-shadow:0 28px 70px rgba(2,6,23,.34),inset 0 0 0 1px rgba(255,255,255,.08);transform:scale(var(--phone-scale));transform-origin:center}
+.iphone-preview{height:calc(932px * min(1,calc((70vh - 32px) / 932),calc((100vw - 74px) / 430)))}
+.iphone-shell:before,.iphone-shell:after{content:"";position:absolute;right:-5px;width:3px;border-radius:999px;background:#1f2937}
+.iphone-shell:before{top:140px;height:72px}
+.iphone-shell:after{top:230px;height:54px}
+.iphone-island{position:absolute;top:19px;left:50%;z-index:2;width:116px;height:32px;border-radius:999px;background:#05070b;transform:translateX(-50%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.05);pointer-events:none}
+.iphone-screen{width:100%;height:100%;overflow:hidden;background:#fff;border-radius:38px}
+.iphone-screen iframe{width:100%;height:100%;border:0;background:#fff}
+.iphone-home{position:absolute;left:50%;bottom:19px;width:116px;height:4px;border-radius:999px;background:rgba(15,23,42,.42);transform:translateX(-50%)}
+.preview-modal-card{width:min(520px,96vw);padding:14px}
 .health-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:12px 0}
 .health-summary div{border:1px solid #d8e1ec;border-radius:12px;background:#f8fafc;padding:12px}
 .health-summary span{display:block;color:#64748b;font-size:11px;text-transform:uppercase;font-weight:900}
@@ -196,6 +221,7 @@ th{background:#f1f5f9;color:#475569;text-transform:uppercase;font-size:11px}
     .topbar h1{font-size:16px;line-height:1.15}
     .topbar p{font-size:11px}
     .top-actions{justify-content:space-between;flex-wrap:wrap}
+    .top-btn{order:3;width:100%}
     .profile-menu-wrap{min-width:0}
     .profile-btn{max-width:190px}
     .profile-popup{right:0;top:calc(100% + 8px)}
@@ -216,6 +242,14 @@ th{background:#f1f5f9;color:#475569;text-transform:uppercase;font-size:11px}
     .mode-row{grid-template-columns:1fr 1fr}
     .timed-control{grid-template-columns:1fr}
     .league-action-grid{grid-template-columns:1fr}
+    .admin-audit-card{grid-template-columns:1fr;gap:8px}
+    .iphone-preview{padding-top:4px}
+    .iphone-shell{--phone-scale:min(1,calc((72vh - 30px) / 932),calc((100vw - 42px) / 430));border-radius:40px;padding:10px}
+    .iphone-preview{height:calc(932px * min(1,calc((72vh - 30px) / 932),calc((100vw - 42px) / 430)))}
+    .iphone-screen{border-radius:31px}
+    .iphone-island{top:17px;width:104px;height:30px}
+    .iphone-home{bottom:17px;width:96px}
+    .preview-modal-card{padding:12px 10px}
     .league-tools,.team-tools{display:grid;grid-template-columns:1fr;align-items:stretch}
     .league-tools>div,.team-tools input{min-width:0}
     .fixture-head{align-items:flex-start;flex-wrap:wrap}

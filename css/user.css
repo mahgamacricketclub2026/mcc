@@ -225,7 +225,7 @@ body.live-glow .center.live:before{content:"";width:7px;height:7px;border-radius
   .graph-axis{stroke:#94a3b8;stroke-width:1.1}
   .graph-guide{stroke:#334155;stroke-width:1.15}
   .graph-hover-dot{r:4}
-  .graph-tooltip{position:fixed;left:50%!important;right:auto!important;bottom:14px!important;top:auto!important;transform:translateX(-50%);min-width:150px;max-width:calc(100vw - 28px);padding:7px 9px}
+  .graph-tooltip{min-width:142px;max-width:210px;padding:7px 9px}
   .graph-tooltip b{font-size:13px;margin-bottom:4px}
   .graph-tip-row{margin-top:4px}
   .graph-tip-row span{font-size:12px}

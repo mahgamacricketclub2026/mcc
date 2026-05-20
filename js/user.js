@@ -459,8 +459,19 @@ window.app = {
       tip.innerHTML = `<b>${overTextFromValue(tooltipOver.over)} overs</b>${rows.map(row => `<div class="graph-tip-row"><span><i class="${row.shape}" style="background:${row.color}"></i>${this.safe(row.name)}</span><strong>${state.mode === "rate" ? rowValue(row).toFixed(2) : `${row.runs}/${row.wkts || 0}`}</strong></div>`).join("")}`;
       tip.classList.remove("hidden");
       if (window.matchMedia?.("(max-width: 520px)").matches) {
-        tip.style.left = "";
-        tip.style.top = "";
+        const tipWidth = tip.offsetWidth || 170;
+        const tipHeight = tip.offsetHeight || 96;
+        const svgScaleX = svgRect.width / state.width;
+        const svgScaleY = svgRect.height / state.height;
+        const pointerX = (clampedX * svgScaleX) + (svgRect.left - rect.left);
+        const bestRow = rows.reduce((best, row) => rowValue(row) >= rowValue(best) ? row : best, rows[0]);
+        const cy = state.height - state.pad - (rowValue(bestRow) / state.maxRuns) * (state.height - state.pad * 2);
+        const pointerY = (cy * svgScaleY) + (svgRect.top - rect.top);
+        let left = pointerX - (tipWidth / 2);
+        let top = pointerY - tipHeight - 12;
+        if (top < 8) top = pointerY + 14;
+        tip.style.left = `${Math.min(rect.width - tipWidth - 8, Math.max(8, left))}px`;
+        tip.style.top = `${Math.min(rect.height - tipHeight - 8, Math.max(8, top))}px`;
         return;
       }
       const tipWidth = tip.offsetWidth || 190;
@@ -487,8 +498,19 @@ window.app = {
       if (!e.target.closest?.(".graph-capture") && !e.target.closest?.("svg")) return hide();
       show(e);
     });
-    box.addEventListener("pointerdown", show);
-    box.addEventListener("pointerleave", hide);
+    box.addEventListener("pointerdown", e => { e.preventDefault?.(); show(e); });
+    box.addEventListener("click", e => {
+      if (!e.target.closest?.(".graph-capture") && !e.target.closest?.("svg")) return;
+      show(e);
+    });
+    box.addEventListener("pointerleave", () => {
+      if (window.matchMedia?.("(max-width: 520px)").matches) return;
+      hide();
+    });
+    document.addEventListener("click", e => {
+      if (!window.matchMedia?.("(max-width: 520px)").matches) return;
+      if (!box.contains(e.target)) hide();
+    });
   },
   activeTeamNames(m = this.state) {
     const names = [

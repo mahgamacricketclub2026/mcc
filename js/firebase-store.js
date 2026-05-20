@@ -45,7 +45,31 @@ export async function isAdmin(uid) {
   if (!uid) return false;
   const snap = await getDoc(doc(firestoreDb, "admins", uid));
   const data = snap.exists() ? snap.data() : null;
-  return !!(data && data.active === true && data.role === "admin");
+  return !!(data && data.active === true && ["admin", "super", "scorer"].includes(String(data.role || "")));
+}
+
+export async function getAdminProfile(uid) {
+  if (!uid) return null;
+  const snap = await getDoc(doc(firestoreDb, "admins", uid));
+  return snap.exists() ? { uid: snap.id, ...snap.data() } : null;
+}
+
+export function listenAdmins(callback, onError) {
+  return onSnapshot(collection(firestoreDb, "admins"), (snap) => {
+    const rows = snap.docs
+      .map(d => ({ uid: d.id, ...d.data() }))
+      .sort((a, b) => String(a.email || a.uid || "").localeCompare(String(b.email || b.uid || "")));
+    callback(rows);
+  }, onError);
+}
+
+export async function updateAdminUser(uid, patch = {}) {
+  if (!uid) throw new Error("Admin UID is required.");
+  await setDoc(doc(firestoreDb, "admins", uid), {
+    ...patch,
+    uid,
+    updatedAt: serverTimestamp()
+  }, { merge: true });
 }
 
 export async function saveAdminUser(uidOrEmail) {
@@ -64,9 +88,10 @@ export async function saveAdminUser(uidOrEmail) {
   return id;
 }
 
-export async function registerAdminUser(email, password) {
+export async function registerAdminUser(email, password, role = "super") {
   const cleanEmail = String(email || "").trim();
   const cleanPassword = String(password || "");
+  const cleanRole = ["super", "scorer"].includes(String(role || "")) ? String(role) : "super";
   if (!cleanEmail || !cleanEmail.includes("@")) throw new Error("Valid email is required.");
   if (cleanPassword.length < 6) throw new Error("Password must be at least 6 characters.");
   const secondaryApp = getApps().find(a => a.name === "admin-registration") || initializeApp(firebaseConfig, "admin-registration");
@@ -75,7 +100,7 @@ export async function registerAdminUser(email, password) {
   await setDoc(doc(firestoreDb, "admins", cred.user.uid), {
     uid: cred.user.uid,
     email: cleanEmail,
-    role: "admin",
+    role: cleanRole,
     active: true,
     updatedAt: serverTimestamp(),
     createdAt: serverTimestamp()

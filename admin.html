@@ -23,6 +23,7 @@
       <div><h1 id="topTitle">Cricket Admin</h1><p id="topSub">Hybrid Firebase scoring panel</p></div>
       <div class="top-actions">
         <span id="syncStatus">Ready</span>
+        <button id="mobilePreviewBtn" class="btn light top-btn" type="button">Mobile Preview</button>
         <div class="profile-menu-wrap">
           <button id="profileBtn" class="profile-btn" type="button" aria-haspopup="true" aria-expanded="false">
             <span id="profileAvatar">A</span>
@@ -33,7 +34,7 @@
               <span id="profilePopupAvatar">A</span>
               <div><b id="profilePopupName">Admin</b><small id="profilePopupEmail">-</small></div>
             </div>
-            <div class="profile-row"><span>Status</span><b>Admin</b></div>
+            <div class="profile-row"><span>Role</span><b id="profileRoleText">Admin</b></div>
             <div class="profile-row"><span>UID</span><code id="profileUid">-</code></div>
             <div class="profile-actions"><button id="addAdminBtn" class="btn">Add Admin</button><button id="logoutBtn" class="btn danger">Logout</button></div>
           </div>
@@ -47,6 +48,7 @@
       <button class="tab" data-page="league">Create League</button>
       <button class="tab" data-page="teams">Manage Players</button>
       <button class="tab" data-page="profileDetails">Profile Details</button>
+      <button class="tab" data-page="admins">Admin Roles</button>
       <button class="tab" data-page="health">Data Health</button>
       <button class="tab" data-page="history">History</button>
     </nav>
@@ -148,6 +150,13 @@
         </div>
       </section>
 
+      <section id="admins" class="page">
+        <div class="panel">
+          <div class="section-head"><div><h2>Admin Role Audit</h2><p>Super Admin full access rakhta hai. Scorer Admin sirf live scoring control use karega.</p></div><button id="refreshAdminsBtn" class="btn primary">Refresh</button></div>
+          <div id="adminAuditList" class="admin-audit-list"></div>
+        </div>
+      </section>
+
       <section id="history" class="page">
         <div class="panel"><h2>Completed Match History</h2><div id="historyList" class="history-grid"></div></div>
       </section>
@@ -162,7 +171,9 @@
 
   <div id="mvpModal" class="modal"><div class="modal-card"><h2>Select Man of the Match</h2><div id="mvpPlayerList" class="picker-list"></div><div class="actions"><button id="mvpCancel" class="btn light">Cancel</button></div></div></div>
 
-  <div id="adminRegisterModal" class="modal"><div class="modal-card"><h2>Add Admin</h2><label>Email</label><input id="newAdminEmail" type="email" placeholder="admin@example.com"><label>Password</label><input id="newAdminPassword" type="password" placeholder="Minimum 6 characters"><div class="actions"><button id="adminRegisterCancel" class="btn light">Cancel</button><button id="adminRegisterSave" class="btn primary">Register Admin</button></div></div></div>
+  <div id="adminRegisterModal" class="modal"><div class="modal-card"><h2>Add Admin</h2><label>Email</label><input id="newAdminEmail" type="email" placeholder="admin@example.com"><label>Password</label><input id="newAdminPassword" type="password" placeholder="Minimum 6 characters"><label>Role</label><select id="newAdminRole"><option value="super">Super Admin</option><option value="scorer">Scorer Admin</option></select><div class="actions"><button id="adminRegisterCancel" class="btn light">Cancel</button><button id="adminRegisterSave" class="btn primary">Register Admin</button></div></div></div>
+
+  <div id="mobilePreviewModal" class="modal"><div class="modal-card preview-modal-card"><div class="section-head"><div><h2>User Mobile Preview</h2><p id="mobilePreviewLink">Current match preview</p></div><button id="mobilePreviewClose" class="btn light">Close</button></div><div class="iphone-preview"><div class="iphone-shell"><div class="iphone-island"></div><div class="iphone-screen"><iframe id="mobilePreviewFrame" title="User mobile preview"></iframe></div><div class="iphone-home"></div></div></div><div class="actions"><button id="mobilePreviewOpen" class="btn primary">Open Full Page</button><button id="mobilePreviewRefresh" class="btn light">Refresh Preview</button></div></div></div>
 
   <div id="teamProfileModal" class="modal"><div class="modal-card"><h2>Team Profile</h2><div id="teamProfileBody" class="admin-team-profile"></div><div class="actions"><button id="teamProfileEdit" class="btn primary">Edit Profile</button><button id="teamProfileClose" class="btn light">Close</button></div></div></div>
 

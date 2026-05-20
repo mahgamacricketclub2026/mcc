@@ -1,6 +1,7 @@
 import { cloudinaryConfig } from "../firebase/firebase-config.js?v=20260519a";
 import {
-  loginAdmin, logoutAdmin, watchAuth, isAdmin,
+  loginAdmin, logoutAdmin, watchAuth, isAdmin, getAdminProfile,
+  listenAdmins, updateAdminUser,
   saveTeam, deleteTeam, listenTeams, savePlayer, deletePlayer, listenPlayers,
   getTeamsWithPlayers, saveLeague, deleteLeague, listenLeagues,
   saveMatch, saveCompletedMatch, listenCompletedMatches, listenScheduledMatches, updateCompletedMatchMvp, deleteCompletedMatch, getStoredScorecard, savePlayerMatchStats, saveSavedLink, savePublicSettings, getPlayerCareerStats, registerAdminUser, makeId, safeId
@@ -90,10 +91,13 @@ window.app = {
   uid: "",
   authUser: null,
   adminOk: false,
+  adminProfile: null,
+  adminRole: "super",
   teams: [],
   leagues: [],
   completed: [],
   scheduled: [],
+  admins: [],
   leagueSelectedIds: new Set(),
   selectedTeamId: "",
   selectedPlayerId: "",
@@ -110,7 +114,9 @@ window.app = {
       this.authUser = user;
       this.uid = user.uid;
       try {
+        this.adminProfile = await getAdminProfile(user.uid);
         this.adminOk = await isAdmin(user.uid);
+        this.adminRole = this.normalizeAdminRole(this.adminProfile?.role);
       } catch (e) {
         this.toast("Unable to verify admin access: " + e.message, true);
         return this.showLogin();
@@ -130,6 +136,7 @@ window.app = {
     $("loginBtn").onclick = () => this.login();
     $("loginPassword").addEventListener("keydown", e => { if (e.key === "Enter") this.login(); });
     $("profileBtn").onclick = (event) => { event.stopPropagation(); this.toggleProfilePopup(); };
+    $("mobilePreviewBtn").onclick = () => this.openMobilePreview();
     $("addAdminBtn").onclick = () => this.openAdminRegisterModal();
     $("logoutBtn").onclick = () => logoutAdmin();
     document.addEventListener("click", (event) => {
@@ -146,6 +153,7 @@ window.app = {
     $("commentaryMode").onchange = () => { this.state.commentaryMode = $("commentaryMode").value; if (this.state.matchId) this.saveAll(false); };
     $("copyLinkBtn").onclick = () => this.copyPublicLink();
     $("openUserBtn").onclick = () => window.open(this.publicLink(), "_blank");
+    if ($("shareWhatsappBtn")) $("shareWhatsappBtn").onclick = () => this.shareScoreWhatsapp();
     document.querySelectorAll(".run-grid button").forEach(b => b.onclick = () => this.scoreBall(b.dataset.custom ? "custom" : Number(b.textContent)));
     $("wicket").onchange = () => { if ($("wicket").checked) this.openWicketModal(); else this.pendingWicket = null; };
     $("clearTypesBtn").onclick = () => this.clearBallTypes();
@@ -184,6 +192,10 @@ window.app = {
     $("deletePlayerBtn").onclick = () => this.runOnce("deletePlayer", "deletePlayerBtn", () => this.deleteSelectedPlayer());
     $("adminRegisterCancel").onclick = () => $("adminRegisterModal").classList.remove("show");
     $("adminRegisterSave").onclick = () => this.runOnce("adminRegister", "adminRegisterSave", () => this.registerAdminFromModal());
+    if ($("refreshAdminsBtn")) $("refreshAdminsBtn").onclick = () => this.renderAdminAudit();
+    if ($("mobilePreviewClose")) $("mobilePreviewClose").onclick = () => $("mobilePreviewModal").classList.remove("show");
+    if ($("mobilePreviewRefresh")) $("mobilePreviewRefresh").onclick = () => this.refreshMobilePreview();
+    if ($("mobilePreviewOpen")) $("mobilePreviewOpen").onclick = () => window.open(this.publicLink(), "_blank");
     if ($("refreshHealthBtn")) $("refreshHealthBtn").onclick = () => this.renderHealthCheck(true);
     $("teamLogoFile").onchange = e => this.uploadImage(e.target.files[0], "teamLogo");
     $("playerImageFile").onchange = e => this.uploadImage(e.target.files[0], "playerImage");
@@ -270,6 +282,7 @@ window.app = {
     this.updatePublicLeagueTabsButton();
   },
   async togglePublicLeagueTabs() {
+    if (!this.requireSuperAdmin("League display setting")) return;
     const input = $("publicLeagueTabs");
     if (!input) return;
     input.checked = !input.checked;
@@ -304,8 +317,37 @@ window.app = {
     if (String(code).includes("permission")) return "Permission denied.";
     return String(code);
   },
-  showLogin() { this.authUser = null; this.uid = ""; this.closeProfilePopup(); $("loginScreen").classList.remove("hidden"); $("adminApp").classList.add("hidden"); },
-  showAdmin() { $("loginScreen").classList.add("hidden"); $("adminApp").classList.remove("hidden"); this.renderProfile(); },
+  showLogin() { this.authUser = null; this.uid = ""; this.adminProfile = null; this.adminRole = "super"; this.closeProfilePopup(); $("loginScreen").classList.remove("hidden"); $("adminApp").classList.add("hidden"); },
+  showAdmin() { $("loginScreen").classList.add("hidden"); $("adminApp").classList.remove("hidden"); this.renderProfile(); this.applyRolePermissions(); },
+
+  normalizeAdminRole(role = "") {
+    const value = String(role || "").toLowerCase();
+    if (value === "scorer") return "scorer";
+    return "super";
+  },
+
+  isSuperAdmin() {
+    return this.adminRole !== "scorer";
+  },
+
+  requireSuperAdmin(action = "This action") {
+    if (this.isSuperAdmin()) return true;
+    this.toast(`${action} सिर्फ Super Admin कर सकता है.`, true);
+    return false;
+  },
+
+  allowedPages() {
+    return this.isSuperAdmin() ? ["setup", "live", "league", "teams", "profileDetails", "admins", "health", "history"] : ["live"];
+  },
+
+  applyRolePermissions() {
+    const allowed = new Set(this.allowedPages());
+    document.querySelectorAll(".tab[data-page]").forEach(btn => btn.classList.toggle("hidden", !allowed.has(btn.dataset.page)));
+    document.querySelectorAll(".page").forEach(page => page.classList.toggle("role-hidden", !allowed.has(page.id)));
+    $("addAdminBtn")?.classList.toggle("hidden", !this.isSuperAdmin());
+    ["clearStorageBtn"].forEach(id => $(id)?.classList.toggle("hidden", !this.isSuperAdmin()));
+    if (!allowed.has(document.querySelector(".page.active")?.id || "")) this.openPage("live");
+  },
 
   profileDisplayName() {
     const user = this.authUser || {};
@@ -323,6 +365,7 @@ window.app = {
     $("profilePopupName").textContent = name;
     $("profilePopupEmail").textContent = email;
     $("profileUid").textContent = user.uid || this.uid || "-";
+    if ($("profileRoleText")) $("profileRoleText").textContent = this.isSuperAdmin() ? "Super Admin" : "Scorer Admin";
   },
 
   toggleProfilePopup() {
@@ -339,16 +382,19 @@ window.app = {
   },
 
   openAdminRegisterModal() {
+    if (!this.requireSuperAdmin("Add Admin")) return;
     $("newAdminEmail").value = "";
     $("newAdminPassword").value = "";
+    if ($("newAdminRole")) $("newAdminRole").value = "super";
     $("adminRegisterModal").classList.add("show");
   },
 
   async registerAdminFromModal() {
     const email = $("newAdminEmail").value;
     const password = $("newAdminPassword").value;
+    if (!this.requireSuperAdmin("Register Admin")) return;
     try {
-      const uid = await registerAdminUser(email, password);
+      const uid = await registerAdminUser(email, password, $("newAdminRole")?.value || "super");
       $("adminRegisterModal").classList.remove("show");
       this.closeProfilePopup();
       this.toast("Admin registered: " + uid);
@@ -362,6 +408,7 @@ window.app = {
     listenLeagues((leagues) => { this.leagues = leagues; this.fillLeagueSelectors(); this.renderLeagueSchedule(); this.renderHealthCheck(); }, e => this.toast(e.message, true));
     listenCompletedMatches((rows) => { this.completed = rows; this.renderHistory(); this.renderDetailProfiles(); this.renderHealthCheck(); }, e => this.toast(e.message, true));
     listenScheduledMatches((rows) => { this.scheduled = rows; this.renderHistory(); this.renderHealthCheck(); }, e => this.toast(e.message, true));
+    if (this.isSuperAdmin()) listenAdmins((rows) => { this.admins = rows; this.renderAdminAudit(); }, e => this.toast(e.message, true));
     this.restoreActiveMatch();
     this.render();
   },
@@ -434,6 +481,7 @@ window.app = {
   },
 
   clearAllLocalStorage() {
+    if (!this.requireSuperAdmin("Clear Storage")) return;
     if (!confirm("Clear all local storage on this browser? This removes local backups, drafts, filters, counters, and saved UI settings.")) return;
     try {
       localStorage.clear();
@@ -467,6 +515,10 @@ window.app = {
   },
 
   openPage(page) {
+    if (!this.allowedPages().includes(page)) {
+      this.toast("यह section सिर्फ Super Admin के लिए है.", true);
+      page = "live";
+    }
     document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
     document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
     $(page).classList.add("active");
@@ -627,6 +679,7 @@ window.app = {
   },
 
   async saveScheduleOnly() {
+    if (!this.requireSuperAdmin("Save Schedule")) return;
     const setup = this.setupTeamsAndLeague();
     if (!setup) return;
     if (!$("matchTime").value) return this.toast("Select match start time before saving schedule.", true);
@@ -673,6 +726,7 @@ window.app = {
   },
 
   async startMatch() {
+    if (!this.requireSuperAdmin("Start Match")) return;
     const setup = this.setupTeamsAndLeague();
     if (!setup) return;
     const { teamA, teamB, league, totalOvers, powerplayOvers } = setup;
@@ -753,6 +807,51 @@ window.app = {
   publicLink() { return new URL(`user.html?match=${this.currentMatchId || this.state.matchId || ""}`, location.href).href; },
   qrCodeUrl(link) { return link ? `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(link)}` : ""; },
   async copyPublicLink() { const link = this.publicLink(); try { await navigator.clipboard.writeText(link); this.toast("Public link copied."); } catch { prompt("Copy public link", link); } },
+
+  openMobilePreview() {
+    const link = this.publicLink();
+    $("mobilePreviewLink").textContent = link;
+    $("mobilePreviewFrame").src = link;
+    $("mobilePreviewModal").classList.add("show");
+  },
+
+  refreshMobilePreview() {
+    const frame = $("mobilePreviewFrame");
+    if (!frame) return;
+    const link = this.publicLink();
+    $("mobilePreviewLink").textContent = link;
+    frame.src = `${link}${link.includes("?") ? "&" : "?"}_preview=${Date.now()}`;
+  },
+
+  scoreShareText(match = this.state) {
+    const s = normalizeState(match || {});
+    const score = `${s.runs}/${s.wkts} (${overText(s.balls)})`;
+    const title = s.matchTitle || s.title || `${s.teamA?.name || "Team A"} vs ${s.teamB?.name || "Team B"}`;
+    const scoreLine = [s.firstInnings, s.secondInnings].filter(Boolean).join(" | ") || `${s.battingTeam?.name || "Score"} ${score}`;
+    const linkMatchId = s.matchId || this.state?.matchId || "";
+    const link = new URL(`user.html?match=${linkMatchId}`, location.href).href;
+    const lines = [
+      `🏏 ${title}`,
+      s.matchFinished || s.status === "completed" ? `Result: ${s.winnerText || "Match Complete"}` : `Live Score: ${s.battingTeam?.name || "Batting"} ${score}`,
+      scoreLine ? `Score: ${scoreLine}` : "",
+      s.target ? `Target: ${s.target}` : "",
+      s.target && !s.matchFinished && s.status !== "completed" ? `Need: ${Math.max(Number(s.target || 0) - Number(s.runs || 0), 0)} runs` : "",
+      `Overs: ${overText(s.balls)} | CRR: ${s.balls ? (s.runs / (s.balls / 6)).toFixed(2) : "0.00"}`,
+      s.bat1?.name && s.bat1.name !== "-" ? `${s.bat1.name}${s.striker === 1 ? "*" : ""}: ${s.bat1.r} (${s.bat1.b})` : "",
+      s.bat2?.name && s.bat2.name !== "-" ? `${s.bat2.name}${s.striker === 2 ? "*" : ""}: ${s.bat2.r} (${s.bat2.b})` : "",
+      s.bowler?.name && s.bowler.name !== "-" ? `Bowler: ${s.bowler.name} ${overText(s.bowler.balls)}-${s.bowler.r}-${s.bowler.w}` : "",
+      s.playerOfMatch ? `Player of Match: ${s.playerOfMatch}` : "",
+      "",
+      `Scorecard: ${link}`
+    ];
+    return lines.filter(line => line !== "").join("\n");
+  },
+
+  shareScoreWhatsapp(matchId = "") {
+    const match = matchId ? this.completed.find(m => m.matchId === matchId) : this.state;
+    if (!match?.matchId) return this.toast("Match not found for sharing.", true);
+    window.open(`https://wa.me/?text=${encodeURIComponent(this.scoreShareText(match))}`, "_blank");
+  },
 
   async scoreBall(run) {
     const s = this.state = normalizeState(this.state);
@@ -1680,7 +1779,7 @@ window.app = {
       const qr = $("liveUserQrImg");
       if (qr) qr.src = this.qrCodeUrl(this.publicLink());
     }
-    this.renderLeagueSchedule(); this.renderHistory(); this.renderHealthCheck();
+    this.renderLeagueSchedule(); this.renderHistory(); this.renderHealthCheck(); this.renderAdminAudit();
   },
   ballClass(x) { const t = String(x); if (/^W(?!d)/i.test(t)) return "wicket"; if (t === "4") return "four"; if (t === "6") return "six"; return ""; },
 
@@ -1866,12 +1965,12 @@ window.app = {
       $("playerFormModal").classList.add("show");
     }
   },
-  async saveTeamForm() { const id = $("teamId").value || undefined; const name = $("teamName").value.trim(); if (!name) return this.toast("Team name is required.", true); const teamId = await saveTeam({ teamId: id, name, shortName: $("teamShort").value.trim(), logo: $("teamLogo").value.trim() }); this.selectTeam(teamId); $("teamFormModal")?.classList.remove("show"); this.toast("Team saved."); },
+  async saveTeamForm() { if (!this.requireSuperAdmin("Save Team")) return; const id = $("teamId").value || undefined; const name = $("teamName").value.trim(); if (!name) return this.toast("Team name is required.", true); const teamId = await saveTeam({ teamId: id, name, shortName: $("teamShort").value.trim(), logo: $("teamLogo").value.trim() }); this.selectTeam(teamId); $("teamFormModal")?.classList.remove("show"); this.toast("Team saved."); },
   clearTeamForm() { ["teamId", "teamName", "teamShort", "teamLogo"].forEach(id => $(id).value = ""); this.selectedTeamId = ""; this.renderTeamProfileInline(null); },
-  async deleteSelectedTeam() { if (!this.selectedTeamId || !confirm("Delete this team?")) return; await deleteTeam(this.selectedTeamId); this.clearTeamForm(); $("teamFormModal")?.classList.remove("show"); this.toast("Team deleted."); },
-  async savePlayerForm() { if (!this.selectedTeamId) return this.toast("Select a team first.", true); const name = $("playerName").value.trim(); if (!name) return this.toast("Player name is required.", true); await savePlayer(this.selectedTeamId, { playerId: $("playerId").value || undefined, name, role: $("playerRole").value, battingStyle: $("battingStyle").value, bowlingStyle: $("bowlingStyle").value, jerseyNo: $("jerseyNo").value, image: $("playerImage").value.trim() }); this.clearPlayerForm(false); $("playerFormModal")?.classList.remove("show"); this.toast("Player saved."); },
+  async deleteSelectedTeam() { if (!this.requireSuperAdmin("Delete Team")) return; if (!this.selectedTeamId || !confirm("Delete this team?")) return; await deleteTeam(this.selectedTeamId); this.clearTeamForm(); $("teamFormModal")?.classList.remove("show"); this.toast("Team deleted."); },
+  async savePlayerForm() { if (!this.requireSuperAdmin("Save Player")) return; if (!this.selectedTeamId) return this.toast("Select a team first.", true); const name = $("playerName").value.trim(); if (!name) return this.toast("Player name is required.", true); await savePlayer(this.selectedTeamId, { playerId: $("playerId").value || undefined, name, role: $("playerRole").value, battingStyle: $("battingStyle").value, bowlingStyle: $("bowlingStyle").value, jerseyNo: $("jerseyNo").value, image: $("playerImage").value.trim() }); this.clearPlayerForm(false); $("playerFormModal")?.classList.remove("show"); this.toast("Player saved."); },
   clearPlayerForm(clearId = true) { ["playerId", "playerName", "battingStyle", "bowlingStyle", "jerseyNo", "playerImage"].forEach(id => $(id).value = ""); if (clearId) { this.selectedPlayerId = ""; this.renderPlayerProfileInline(null); } },
-  async deleteSelectedPlayer() { if (!this.selectedTeamId || !this.selectedPlayerId || !confirm("Delete this player?")) return; await deletePlayer(this.selectedTeamId, this.selectedPlayerId); this.clearPlayerForm(); $("playerFormModal")?.classList.remove("show"); this.toast("Player deleted."); },
+  async deleteSelectedPlayer() { if (!this.requireSuperAdmin("Delete Player")) return; if (!this.selectedTeamId || !this.selectedPlayerId || !confirm("Delete this player?")) return; await deletePlayer(this.selectedTeamId, this.selectedPlayerId); this.clearPlayerForm(); $("playerFormModal")?.classList.remove("show"); this.toast("Player deleted."); },
 
   async uploadImage(file, targetInput) { if (!file) return; if (!cloudinaryConfig.cloudName || cloudinaryConfig.cloudName.includes("YOUR")) return this.toast("Cloudinary configuration is required.", true); const fd = new FormData(); fd.append("file", file); fd.append("upload_preset", cloudinaryConfig.uploadPreset); try { const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudinaryConfig.cloudName}/image/upload`, { method: "POST", body: fd }); if (!res.ok) throw new Error("Cloudinary upload failed"); const json = await res.json(); $(targetInput).value = json.secure_url || json.url || ""; this.toast("Image uploaded."); } catch (e) { this.toast(e.message, true); } },
 
@@ -2044,6 +2143,7 @@ window.app = {
   },
 
   async deleteSelectedLeague() {
+    if (!this.requireSuperAdmin("Delete League")) return;
     const id = $("leagueManageSelect")?.value || this.editingLeagueId || "";
     const league = this.leagues.find(l => l.leagueId === id);
     if (!league) return this.toast("Select a league first.", true);
@@ -2054,6 +2154,7 @@ window.app = {
   },
 
   generateSchedule() {
+    if (!this.requireSuperAdmin("Generate Schedule")) return;
     const teams = this.selectedLeagueTeamObjs().map(t => this.teamById(t.teamId)).filter(Boolean);
     if (teams.length < 2) return this.toast("Select at least two teams.", true);
     if (this.currentSchedule().length && !confirm("Generate a new schedule? The current draft schedule will be replaced.")) return;
@@ -2100,6 +2201,7 @@ window.app = {
   },
 
   async saveLeagueForm() {
+    if (!this.requireSuperAdmin("Save League")) return;
     const selectedTeams = this.selectedLeagueTeamObjs();
     const existing = (this.editingLeagueId && this.leagues.find(l => l.leagueId === this.editingLeagueId)) || (this.state.league?.leagueId ? this.state.league : null);
     const schedule = this.draftSchedule || existing?.schedule || [];
@@ -2173,6 +2275,7 @@ window.app = {
     return conflicts;
   },
   applyManualPoints() {
+    if (!this.requireSuperAdmin("Manual Points")) return;
     const team = $("manualPointTeam")?.value || "";
     if (!team) return this.toast("Select a team for points adjustment.", true);
     const league = this.currentLeague() || {};
@@ -2197,6 +2300,7 @@ window.app = {
     this.saveLeagueDraftLocal();
   },
   togglePlayoffLock() {
+    if (!this.requireSuperAdmin("Playoff Lock")) return;
     const league = this.currentLeague();
     const locked = !this.leaguePlayoffsLocked();
     this.playoffLockedDraft = locked;
@@ -2206,6 +2310,7 @@ window.app = {
   },
 
   editFixture(index) {
+    if (!this.requireSuperAdmin("Edit Fixture")) return;
     this.editingFixtureIndex = index;
     this.renderLeagueSchedule();
   },
@@ -2216,6 +2321,7 @@ window.app = {
   },
 
   updateFixture(index, field, value) {
+    if (!this.requireSuperAdmin("Update Fixture")) return;
     const schedule = this.currentSchedule();
     const fixture = schedule[index];
     if (!fixture) return;
@@ -2228,6 +2334,7 @@ window.app = {
   },
 
   async saveFixture(index) {
+    if (!this.requireSuperAdmin("Save Fixture")) return;
     const schedule = this.currentSchedule();
     const fixture = schedule[index];
     if (!fixture) return;
@@ -2274,6 +2381,7 @@ window.app = {
   },
 
   useFixtureSetup(index, fromSetupSelect = false) {
+    if (!this.requireSuperAdmin("Use Fixture Setup")) return;
     const selectedLeague = this.leagues.find(l => l.leagueId === $("setupLeague")?.value);
     const schedule = Array.isArray(selectedLeague?.schedule) ? selectedLeague.schedule : this.currentSchedule();
     const fixture = schedule[index];
@@ -2301,6 +2409,7 @@ window.app = {
   },
 
   autoFillPlayoffs() {
+    if (!this.requireSuperAdmin("Auto Fill Playoffs")) return;
     if (this.leaguePlayoffsLocked()) return this.toast("Playoffs are locked. Unlock before auto-fill.", true);
     const schedule = this.currentSchedule();
     const pts = this.state.pointsTable || this.currentLeague()?.pointsTable || {};
@@ -2347,6 +2456,47 @@ window.app = {
     $("leaguePoints").innerHTML = Object.entries(pts).map(([team, p]) => `<tr><td>${this.safe(team)}</td><td>${p.P || 0}</td><td>${p.W || 0}</td><td>${p.L || 0}</td><td>${p.T || 0}</td><td>${p.NR || 0}</td><td>${p.Pts || 0}</td><td>${this.nrr(p)}</td></tr>`).join("") || `<tr><td colspan="8">No points</td></tr>`;
   },
   nrr(p) { const rf = p.BF ? p.RF / (p.BF / 6) : 0; const ra = p.BA ? p.RA / (p.BA / 6) : 0; return (rf - ra + Number(p.manualNRR || 0)).toFixed(3); },
+
+  renderAdminAudit() {
+    const box = $("adminAuditList");
+    if (!box) return;
+    if (!this.isSuperAdmin()) {
+      box.innerHTML = "<div class='item'>Only Super Admin can view role audit.</div>";
+      return;
+    }
+    const rows = this.admins || [];
+    box.innerHTML = rows.length ? rows.map(admin => {
+      const uid = admin.uid || "";
+      const role = this.normalizeAdminRole(admin.role);
+      const active = admin.active === true;
+      const isSelf = uid === this.uid;
+      return `<div class="admin-audit-card ${active ? "" : "inactive"}">
+        <div><b>${this.safe(admin.email || uid || "Admin")}</b><code>${this.safe(uid)}</code><small>${isSelf ? "Current account" : "Admin account"}</small></div>
+        <select onchange="app.changeAdminRole('${this.safe(uid)}', this.value)" ${isSelf ? "disabled" : ""}>
+          <option value="super" ${role === "super" ? "selected" : ""}>Super Admin</option>
+          <option value="scorer" ${role === "scorer" ? "selected" : ""}>Scorer Admin</option>
+        </select>
+        <button class="btn ${active ? "warn" : "primary"}" onclick="app.setAdminActive('${this.safe(uid)}', ${active ? "false" : "true"})" ${isSelf ? "disabled" : ""}>${active ? "Deactivate" : "Activate"}</button>
+        <span class="admin-audit-status">${active ? "Active" : "Inactive"}</span>
+      </div>`;
+    }).join("") : "<div class='item'>No admin records found.</div>";
+  },
+
+  async changeAdminRole(uid, role) {
+    if (!this.requireSuperAdmin("Change Admin Role")) return;
+    if (uid === this.uid) return this.toast("You cannot change your own role.", true);
+    const cleanRole = role === "scorer" ? "scorer" : "super";
+    await updateAdminUser(uid, { role: cleanRole });
+    this.toast(`Admin role changed to ${cleanRole === "super" ? "Super Admin" : "Scorer Admin"}.`);
+  },
+
+  async setAdminActive(uid, active) {
+    if (!this.requireSuperAdmin("Change Admin Status")) return;
+    if (uid === this.uid) return this.toast("You cannot deactivate your own account.", true);
+    if (!active && !confirm("Deactivate this admin account?")) return;
+    await updateAdminUser(uid, { active: !!active });
+    this.toast(`Admin ${active ? "activated" : "deactivated"}.`);
+  },
 
   renderHealthCheck(showToast = false) {
     if (!$("healthSummary") || !$("healthList")) return;
@@ -2465,7 +2615,7 @@ window.app = {
       .filter(m => m.matchId && m.matchId !== savedId)
       .map(m => this.scheduledHistoryCard(m))
       .join("");
-    const historyHtml = this.completed.map(m => `<div class="card-mini"><b>${this.safe(m.matchTitle || m.title || "Match")}</b><br><small>${this.safe(m.leagueName || "")}</small><p>${this.safe(m.firstInnings || "")} ${m.secondInnings ? " | " + this.safe(m.secondInnings) : ""}</p><b>${this.safe(m.winnerText || "-")}</b><div class="actions"><button class="btn light" onclick="window.open('user.html?match=${m.matchId}','_blank')">View</button><button class="btn" onclick="window.open('scorecard-download.html?match=${m.matchId}','_blank')">PDF</button><button class="btn warn" onclick="app.editManOfMatch('${m.matchId}')">Edit MVP</button><button class="btn danger" onclick="app.deleteHistoryMatch('${m.matchId}')">Delete</button></div></div>`).join("");
+    const historyHtml = this.completed.map(m => `<div class="card-mini"><b>${this.safe(m.matchTitle || m.title || "Match")}</b><br><small>${this.safe(m.leagueName || "")}</small><p>${this.safe(m.firstInnings || "")} ${m.secondInnings ? " | " + this.safe(m.secondInnings) : ""}</p><b>${this.safe(m.winnerText || "-")}</b><div class="actions"><button class="btn whatsapp" onclick="app.shareScoreWhatsapp('${this.safe(m.matchId)}')">WhatsApp Share</button><button class="btn light" onclick="window.open('user.html?match=${m.matchId}','_blank')">View</button><button class="btn" onclick="window.open('scorecard-download.html?match=${m.matchId}','_blank')">PDF</button><button class="btn warn" onclick="app.editManOfMatch('${m.matchId}')">Edit MVP</button><button class="btn danger" onclick="app.deleteHistoryMatch('${m.matchId}')">Delete</button></div></div>`).join("");
     $("historyList").innerHTML = continueCard + scheduledHtml + (historyHtml || "<div class='item'>No completed matches</div>");
   },
 
@@ -2496,6 +2646,7 @@ window.app = {
   },
 
   async editManOfMatch(matchId) {
+    if (!this.requireSuperAdmin("Edit MVP")) return;
     const match = this.completed.find(m => m.matchId === matchId);
     if (!match) return this.toast("Match not found.", true);
     let scorecard = match.fullScorecardData || match.scorecard || {};
@@ -2539,6 +2690,7 @@ window.app = {
   },
 
   selectMvp(playerName) {
+    if (!this.requireSuperAdmin("Edit MVP")) return;
     const matchId = this.mvpCurrentMatch;
     const currentMvp = this.mvpCurrentMvp;
     if (playerName === currentMvp) {
@@ -2554,6 +2706,7 @@ window.app = {
   },
 
   async deleteHistoryMatch(matchId) {
+    if (!this.requireSuperAdmin("Delete Match")) return;
     const match = this.completed.find(m => m.matchId === matchId);
     const enteredId = prompt(`Delete match ${matchId}?
 Type the match ID to confirm permanent deletion:`);
