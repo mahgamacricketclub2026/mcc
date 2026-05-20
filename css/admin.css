@@ -1,5 +1,6 @@
 *{box-sizing:border-box}
 body{margin:0;font-family:Inter,Segoe UI,Roboto,Arial,sans-serif;background:#f3f6fa;color:#142033}
+body{overflow-x:hidden}
 .hidden{display:none!important}
 .login-screen{position:fixed;inset:0;background:#111827;display:flex;align-items:center;justify-content:center;padding:16px;z-index:20}
 .login-card{width:min(430px,96vw);background:#fff;border-radius:18px;padding:22px;box-shadow:0 28px 70px rgba(0,0,0,.35)}
@@ -13,12 +14,12 @@ body{margin:0;font-family:Inter,Segoe UI,Roboto,Arial,sans-serif;background:#f3f
 .status-pill{padding:8px 11px;border-radius:999px;background:#475569;font-size:12px;font-weight:900}
 .status-pill.live{background:#0f766e}
 .status-pill.complete{background:#7f1d1d}
-.top-actions{display:flex;gap:10px;align-items:center}
+.top-actions{display:flex;gap:10px;align-items:center;min-width:0}
 .profile-menu-wrap{position:relative}
 .profile-btn{border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#fff;border-radius:999px;padding:5px 9px 5px 5px;display:flex;align-items:center;gap:7px;font-weight:900;cursor:pointer;max-width:210px}
 .profile-btn span,.profile-head>span{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:#0f766e;color:#fff;font-size:12px;font-weight:1000;flex:0 0 28px}
 .profile-btn b{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:145px}
-.profile-popup{position:absolute;right:0;top:calc(100% + 10px);width:300px;background:#fff;color:#142033;border:1px solid #d8e1ec;border-radius:12px;box-shadow:0 18px 48px rgba(15,23,42,.24);padding:12px;z-index:30}
+.profile-popup{position:absolute;right:0;top:calc(100% + 10px);width:min(300px,calc(100vw - 24px));background:#fff;color:#142033;border:1px solid #d8e1ec;border-radius:12px;box-shadow:0 18px 48px rgba(15,23,42,.24);padding:12px;z-index:30}
 .profile-popup:before{content:"";position:absolute;right:20px;top:-7px;width:12px;height:12px;background:#fff;border-left:1px solid #d8e1ec;border-top:1px solid #d8e1ec;transform:rotate(45deg)}
 .profile-head{display:flex;align-items:center;gap:10px;padding-bottom:10px;border-bottom:1px solid #e2e8f0;margin-bottom:8px}
 .profile-head b{display:block;color:#10243d;font-size:14px}
@@ -56,7 +57,7 @@ body{margin:0;font-family:Inter,Segoe UI,Roboto,Arial,sans-serif;background:#f3f
 .profile-player-list span{background:#eef2f7;border:1px solid #dbe4ee;border-radius:999px;padding:6px 9px;font-size:12px;font-weight:800;color:#475569}
 .team-card.active,.player-card.active{border-color:#0f766e;background:#ecfdf5}
 .left-stack{display:grid;gap:12px}
-.panel{background:#fff;border:1px solid #d8e1ec;border-radius:14px;padding:14px;box-shadow:0 10px 24px rgba(15,23,42,.04);margin-bottom:12px}
+.panel{background:#fff;border:1px solid #d8e1ec;border-radius:14px;padding:14px;box-shadow:0 10px 24px rgba(15,23,42,.04);margin-bottom:12px;min-width:0}
 .panel h2{margin:0 0 12px;font-size:16px;color:#10243d}
 .section-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px}
 .section-head h2{margin:0 0 5px}
@@ -71,6 +72,7 @@ body{margin:0;font-family:Inter,Segoe UI,Roboto,Arial,sans-serif;background:#f3f
 .setup-mode input{width:auto}
 .setup-mode label:has(input:checked){background:#0f766e;color:#fff;border-color:#0f766e}
 .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.actions .btn{min-width:0}
 .btn{border:0;border-radius:10px;background:#e8eef5;color:#1f2f46;padding:10px 13px;font-weight:900;cursor:pointer}
 .btn.primary,.btn:hover{background:#0f766e;color:#fff}
 .btn.warn{background:#b45309;color:#fff}
@@ -112,12 +114,13 @@ body{margin:0;font-family:Inter,Segoe UI,Roboto,Arial,sans-serif;background:#f3f
 .ball.boundary{background:#15803d;color:#fff}
 .list{border:1px solid #e2e8f0;border-radius:12px;background:#fff;padding:8px;max-height:280px;overflow:auto}
 .list.big{max-height:620px}
-.item{padding:9px;border-bottom:1px solid #edf2f7}
+.item{padding:9px;border-bottom:1px solid #edf2f7;overflow-wrap:anywhere}
 .item:last-child{border-bottom:0}
 .item.click{cursor:pointer}
 .item.click:hover{background:#f0fdfa}table{width:100%;border-collapse:collapse;font-size:13px}
 .fixture-row{display:grid;gap:8px}
 .fixture-head{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.fixture-head b{min-width:0;overflow-wrap:anywhere}
 .fixture-head span{border-radius:999px;background:#eef3f8;color:#334155;padding:4px 8px;font-size:11px;font-weight:900;text-transform:uppercase}
 .fixture-row label{margin:0 0 4px}
 .fixture-row input,.fixture-row select{padding:8px;font-size:12px}
@@ -140,7 +143,7 @@ th{background:#f1f5f9;color:#475569;text-transform:uppercase;font-size:11px}
 .fixture-alert{margin:8px 0;padding:9px;border:1px solid #fecaca;background:#fff1f2;color:#991b1b;border-radius:10px;font-size:12px;font-weight:800}
 .fixture-row.locked-playoff{border-color:#f59e0b;background:#fffbeb}
 .player-grid,.history-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}
-.card-mini{border:1px solid #e2e8f0;border-radius:12px;padding:10px;background:#fff;cursor:pointer}
+.card-mini{border:1px solid #e2e8f0;border-radius:12px;padding:10px;background:#fff;cursor:pointer;min-width:0;overflow-wrap:anywhere}
 .card-mini:hover{border-color:#0f766e}
 .team-card{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center}
 .team-card .team-meta{min-width:0}
@@ -183,25 +186,58 @@ th{background:#f1f5f9;color:#475569;text-transform:uppercase;font-size:11px}
 .picker-option:hover{background:#ecfdf5}.wicket-types{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
 .wicket-types button.active{background:#dc2626;color:#fff;border-color:#dc2626}
  @media(max-width:980px){
-    .setup-grid,.live-grid,.league-grid,.teams-grid{
+    .setup-grid,.live-grid,.league-grid,.teams-grid,.profile-details-grid{
         grid-template-columns:1fr}.mode-row{
         grid-template-columns:repeat(3,1fr)}.extras{
         grid-template-columns:repeat(3,1fr)}.run-grid{
         grid-template-columns:repeat(4,1fr)}}
  @media(max-width:560px){
-    .topbar{grid-template-columns:1fr}
-    .tabs{top:auto}.wrap{padding:8px}
+    .topbar{grid-template-columns:1fr;gap:8px;padding:10px}
+    .topbar h1{font-size:16px;line-height:1.15}
+    .topbar p{font-size:11px}
+    .top-actions{justify-content:space-between;flex-wrap:wrap}
+    .profile-menu-wrap{min-width:0}
+    .profile-btn{max-width:190px}
+    .profile-popup{right:0;top:calc(100% + 8px)}
+    .tabs{top:auto;padding:8px;gap:6px}
+    .tab{padding:8px 10px;font-size:12px;border-radius:9px}
+    .wrap{padding:8px}
     .panel{padding:10px;border-radius:11px}
     .grid2,.grid3{grid-template-columns:1fr}
     .player-grid,.history-grid{grid-template-columns:1fr}
     .health-summary{grid-template-columns:1fr 1fr}
+    .profile-fields{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+    .profile-fields div{padding:8px}
+    .profile-fields b,.profile-fields code{font-size:12px}
+    .profile-inline-logo,.profile-inline-avatar{width:52px;height:52px;font-size:17px}
     .section-head{display:grid}
     .check-grid{grid-template-columns:1fr}
     .extras{grid-template-columns:repeat(2,1fr)}
     .mode-row{grid-template-columns:1fr 1fr}
+    .timed-control{grid-template-columns:1fr}
+    .league-action-grid{grid-template-columns:1fr}
+    .league-tools,.team-tools{display:grid;grid-template-columns:1fr;align-items:stretch}
+    .league-tools>div,.team-tools input{min-width:0}
+    .fixture-head{align-items:flex-start;flex-wrap:wrap}
+    .fixture-head span{white-space:normal}
+    .panel table{display:block;width:100%;max-width:100%;overflow-x:auto;white-space:nowrap;font-size:11px}
+    th,td{padding:7px 5px}
+    .small-metrics b{font-size:16px;overflow-wrap:anywhere}
+    .actions .btn{flex:1 1 calc(50% - 8px);padding:9px 8px;font-size:12px}
+    .control-panel .actions .btn{flex-basis:calc(50% - 8px)}
     .score-big{font-size:38px}
     .modal{align-items:flex-end;padding:0}
-    .modal-card{width:100%;border-radius:16px 16px 0 0}
+    .modal-card{width:100%;max-height:92vh;border-radius:16px 16px 0 0;padding:14px 12px}
+    .modal-card .actions .btn{flex-basis:calc(50% - 8px)}
     .run-grid button{min-height:48px}}
+ @media(max-width:380px){
+    .profile-fields{grid-template-columns:1fr}
+    .health-summary{grid-template-columns:1fr}
+    .actions .btn,.control-panel .actions .btn,.modal-card .actions .btn{flex-basis:100%}
+    .run-grid{grid-template-columns:repeat(4,1fr);gap:6px}
+    .run-grid button{min-height:44px;font-size:17px;padding:8px 4px}
+    .extras{grid-template-columns:1fr}
+    .profile-btn{max-width:160px}
+ }
 .save-note{margin-top:10px;font-size:12px;color:#64748b;background:#f8fafc;border:1px dashed #cbd5e1;border-radius:10px;padding:9px 10px}
 .btn.primary{background:#0f8a73;color:#fff}

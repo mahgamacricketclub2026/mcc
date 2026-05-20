@@ -239,6 +239,14 @@ body.live-glow .center.live:before{content:"";width:7px;height:7px;border-radius
   .card th:first-child,.card td:first-child{width:44%;text-align:left}
   .card th:nth-child(n+2),.card td:nth-child(n+2){text-align:center}
   .card td[colspan]{width:100%!important;max-width:100%!important;text-align:left;white-space:normal;overflow:visible;text-overflow:clip}
+  .team-tabs button{min-width:0;font-size:12px;padding:10px 6px}
+  .commentary-item{gap:7px}
+  .commentary-item>div{min-width:0;overflow-wrap:anywhere}
+  .commentary-tag{min-width:44px;padding:4px 6px}
+  .match-card-mini,.fixture-card{overflow-wrap:anywhere}
+  .fixture-top{flex-wrap:wrap;align-items:flex-start}
+  .fixture-top span,.fixture-top b{max-width:100%;white-space:normal}
+  .fixture-card strong,.fixture-card small{overflow-wrap:anywhere}
   .modal{align-items:flex-end;padding:8px}
   .modal-card{width:100%;max-height:92vh;border-radius:16px 16px 0 0;padding:14px 12px}
   .modal-card button#modalClose{right:10px;top:10px;width:32px;height:32px;z-index:2}
